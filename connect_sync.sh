@@ -9,7 +9,7 @@ cd /path_to_yourscript/
 rm ./test
 rm ./test5
 python3 ./scale.py > ./test
-cat ./test | awk -F\<wyze_sdk.ScaleRecord '{print $2}' | awk -F'[ |/}]'  '{printf $5$7$9$11$13$15$17$34$36$38$47}' > ./test5
+cat ./test | awk -F\<wyze_sdk.ScaleRecord '{print $2}' | awk -F'[ |/}]'  '{printf $5$7$9$11$13$15$17$34$38$40$49}' > ./test5
 cp ./wyze.csv ./wyze.1.csv
 awk -F, '{$8=substr($8, 1, 10); ts= $8-631065600; printf "Data,0,weight_scale,timestamp,";printf "%.0f",ts; print",s,weight,"($11*0.45359237)",kg,percent_fat,"$3",\045,percent_hydration,"$6",\045,muscle_mass,"$10",kg,physique_rating,"$4",,basal_met,"$2",kcal/day,visceral_fat_rating,"$5",,bone_mass,"$7",kg,metabolic_age,"$9",years"}' ./test5 >> ./wyze.1.csv
 md5sum ./wyze.1.csv | awk '{print $1,"./wyze.last.csv"}' > ./cksum.txt
