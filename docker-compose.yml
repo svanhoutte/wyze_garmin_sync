@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  wyzegarminconnect:
+    image: svanhoutte/wyzegarminconnect:latest
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      WYZE_EMAIL: "wyze username"
+      WYZE_PASSWORD: "wyze password"
+      WYZE_TOTP: "wyze totp cf § how to setup totp"
+      Garmin_username: "garmin username"
+      Garmin_password: "garmin password"
+    volumes:
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/etc/localtime:/etc/localtime:ro"
