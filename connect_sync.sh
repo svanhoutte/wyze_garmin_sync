@@ -6,6 +6,7 @@
 #export WYZE_EMAIL
 #export WYZE_PASSWORD
 #cd /path_to_yourscript/
+pushd /wyze_garmin_sync/
 python3 /wyze_garmin_sync/scale.py
 if md5sum -c /wyze_garmin_sync/cksum.txt; then
 echo "no new measurment"
