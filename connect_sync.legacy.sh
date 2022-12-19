@@ -11,6 +11,7 @@ export WYZE_PASSWORD
 export WYZE_TOTP
 cd ~/path_to_your_script/
 # end of information to populate
+export PATH="$HOME/.local/bin:$PATH"
 python3 ./scale.py
 if md5sum -c ./cksum.txt; then
 echo "no new measurment"
