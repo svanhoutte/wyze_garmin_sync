@@ -14,8 +14,8 @@ else
 if gupload -u $Garmin_username -p $Garmin_password  -v 1 /wyze_garmin_sync/wyze_scale.fit; then
 echo "file uploaded"
 md5sum /wyze_garmin_sync/wyze_scale.fit > /wyze_garmin_sync/cksum.txt
-else
 exit 0
+else
 echo "file not uploaded"
 fi
 fi
