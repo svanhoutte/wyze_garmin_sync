@@ -99,6 +99,7 @@ Edit the script shell connect_sync.legacy.sh to enter your credentials.
     WYZE_TOTP=
     Garmin_username=
     Garmin_password=
+	cd ~/path_to_your_script/
 
 #### [](https://github.com/svanhoutte/wyze_garmin_sync#run-the-script)Run the script
 
