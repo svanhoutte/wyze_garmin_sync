@@ -37,6 +37,9 @@ Edit the file to fill in the environment variable ([docker-compose.yml](https://
 ## Install through docker compose
 
 [![Docker](https://img.shields.io/docker/v/svanhoutte/wyzegarminconnect/latest?logo=docker)](https://hub.docker.com/repository/docker/svanhoutte/wyzegarminconnect)
+[![Docker](https://badgen.net/badge/color/arm64/yellow?icon=docker&label=)] [![Docker](https://badgen.net/badge/color/arm/orange?icon=docker&label=)] [![Docker](https://badgen.net/badge/color/amd64/blue?icon=docker&label=)] 
+
+Docker image is now available for amd64, arm64 and arm.
 
 Download the [docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync/blob/main/docker-compose.yml "docker-compose.yml") and add your credentials:
 
