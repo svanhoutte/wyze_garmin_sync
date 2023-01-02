@@ -23,7 +23,7 @@ os.environ['WYZE_ACCESS_TOKEN'] = ', '.join({response['access_token']})
 try:
     client = Client(token=os.environ['WYZE_ACCESS_TOKEN'])
     for device in client.devices_list():
-        if "JA" in device.mac:
+        if "WyzeScale" in device.type:
             scale = client.scales.info(device_mac= ', '.join({device.mac}))
             print("Scale fund and with MAC " + device.mac + " latest record is")
             print(scale.latest_records)
