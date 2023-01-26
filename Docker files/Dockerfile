@@ -7,8 +7,6 @@ RUN mkdir /wyze_garmin_sync
 WORKDIR /
 RUN git clone https://github.com/svanhoutte/wyze_garmin_sync.git
 WORKDIR /wyze_garmin_sync
-ADD garmin_wyze_scheduler /etc/cron.d/
-RUN chmod 0644 /etc/cron.d/garmin_wyze_scheduler && crontab /etc/cron.d/garmin_wyze_scheduler
 ADD entrypoint.sh ./
 CMD /wyze_garmin_sync/entrypoint.sh
 
