@@ -2,6 +2,8 @@ import math
 import os
 import sys
 import wyze_sdk
+import logging
+#logging.basicConfig(level=logging.DEBUG)
 from fit import FitEncoder_Weight
 from wyze_sdk import Client
 from wyze_sdk.errors import WyzeApiError
@@ -14,8 +16,7 @@ from wyze_sdk.errors import WyzeRequestError
 from wyze_sdk.models.devices import DeviceModels, Scale, ScaleRecord, UserGoalWeight
 from wyze_sdk.service import WyzeResponse
 
-client = Client(email=os.environ['WYZE_EMAIL'], password=os.environ['WYZE_PASSWORD'], totp_key=os.environ['WYZE_TOTP'])
-response = Client().login(email=os.environ['WYZE_EMAIL'], password=os.environ['WYZE_PASSWORD'], totp_key=os.environ['WYZE_TOTP'])
+response = Client().login(email=os.environ['WYZE_EMAIL'], password=os.environ['WYZE_PASSWORD'], key_id=os.environ['WYZE_KEY_ID'],api_key=os.environ['WYZE_API_KEY'])
 #print(f"access token: {response['access_token']}")
 #print(f"refresh token: {response['refresh_token']}")
 os.environ['WYZE_ACCESS_TOKEN'] = ', '.join({response['access_token']})
