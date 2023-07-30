@@ -7,7 +7,9 @@ services:
     environment:
       WYZE_EMAIL: "wyze username"
       WYZE_PASSWORD: "wyze password"
-      WYZE_TOTP: "wyze totp cf § how to setup totp"
+#go their to create your key and id https://developer-api-console.wyze.com/#/apikey/view
+      WYZE_KEY_ID: "key_ID"
+      WYZE_API_KEY: "api_key"
       Garmin_username: "garmin username"
       Garmin_password: "garmin password"
     volumes:
