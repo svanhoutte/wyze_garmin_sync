@@ -49,7 +49,7 @@ Download the [docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync
           WYZE_EMAIL: "wyze username"
           WYZE_PASSWORD: "wyze password"
           WYZE_KEY_ID: "ID"
-	  WYZE_API_KEY: "KEY"
+          WYZE_API_KEY: "KEY"
           Garmin_username: "garmin username"
           Garmin_password: "garmin password"
         volumes:
