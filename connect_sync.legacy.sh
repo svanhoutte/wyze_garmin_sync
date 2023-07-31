@@ -2,13 +2,15 @@
 # information to populate
 WYZE_EMAIL=youremail
 WYZE_PASSWORD=yourpassword
-WYZE_TOTP=TOTP
+WYZE_KEY_ID=your_ID
+WYZE_API_KEY=your_key
 Garmin_username=youremail
 Garmin_password=yourpassword
 export PATH="$HOME/.local/bin:$PATH"
 export WYZE_EMAIL
 export WYZE_PASSWORD
-export WYZE_TOTP
+export WYZE_KEY_ID
+export WYZE_API_KEY
 cd ~/path_to_your_script/
 # end of information to populate
 export PATH="$HOME/.local/bin:$PATH"
