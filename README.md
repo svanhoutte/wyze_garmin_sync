@@ -25,14 +25,10 @@ The python script collect the data from your Wyze account and create the .fit fi
 The solution has been updated to support 2FA and now auto-discover the scale. 
 Additionally in order to improve portability and have a more plug and play solution you can now enjoy a docker version
 
-## 2FA requirements / TOTP
+## Authentication 
 
-wyze_sdk implemented support for using TOTP (Time-Based One-Time Password).
-
-How to Setup TOTP If you already have 2FA setup on your Wyze account you will have to reapply it, you will have to remove it and readd it. 
-To remove it, navigate to the Wyze app and go -> Accounts -> Security -> Two-Factor Authentication and remove verification
-To add it navigate to the Wyze app and go  -> Accounts -> Security -> Two-Factor Authentication, select Verification by Authenticator app. Read the instructions from Wyze **AND** make sure to copy and **KEEP** the value in step 3. This is your Base32 SECRET used to generate TOTP. Go ahead and setup your TOTP on the Authenticator of your choosing.
-Edit the file to fill in the environment variable ([docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync/blob/main/docker-compose.yml "docker-compose.yml") if you are using the docker version, [connect_sync.legacy.sh](https://github.com/svanhoutte/wyze_garmin_sync/blob/main/connect_sync.legacy.sh "connect_sync.legacy.sh") if you are using the bash file directly) username, password and for TOTP, copy the Base32 SECRET you got from the Wyze app and you should now be authenticated with 2FA enabled!
+Login/Pass/TOTP is not working anymore Wyze requires an API key and id to log in
+Visit the Wyze developer API portal to generate an API ID/KEY: https://developer-api-console.wyze.com/#/apikey/view
 
 ## Install through docker compose
 
@@ -52,7 +48,8 @@ Download the [docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync
         environment:
           WYZE_EMAIL: "wyze username"
           WYZE_PASSWORD: "wyze password"
-          WYZE_TOTP: "wyze totp cf § how to setup totp"
+          WYZE_KEY_ID: "ID"
+	  WYZE_API_KEY: "KEY"
           Garmin_username: "garmin username"
           Garmin_password: "garmin password"
         volumes:
@@ -100,6 +97,8 @@ Edit the script shell connect_sync.legacy.sh to enter your credentials.
     WYZE_EMAIL=
     WYZE_PASSWORD=
     WYZE_TOTP=
+    WYZE_KEY_ID=
+    WYZE_API_KEY=
     Garmin_username=
     Garmin_password=
 	cd ~/path_to_your_script/
