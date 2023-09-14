@@ -29,6 +29,12 @@ try:
             print("Scale fund and with MAC " + device.mac + " latest record is")
             print(scale.latest_records)
             print("Firmware version is " + scale.firmware_version )
+            print("testing body type")
+           if scale.latest_records[0].body_type == None:
+                bodytype = 5
+            else:
+                bodytype = scale.latest_records[0].body_type
+            print(bodytype)
 #             """Generate fit data from measured data"""
             print("Generating fit data...")
             fit = FitEncoder_Weight()
@@ -44,7 +50,7 @@ try:
                         bone_mass=float(scale.latest_records[0].bone_mineral),
                         muscle_mass=float(scale.latest_records[0].muscle),
                         basal_met=float(scale.latest_records[0].bmr),
-                        physique_rating=float(scale.latest_records[0].body_type),
+                        physique_rating=float(bodytype),
                         active_met=int(float(scale.latest_records[0].bmr) * 1.25),
                         metabolic_age=float(scale.latest_records[0].metabolic_age),
                         visceral_fat_rating=float(scale.latest_records[0].body_vfr),
