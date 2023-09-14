@@ -30,7 +30,7 @@ try:
             print(scale.latest_records)
             print("Firmware version is " + scale.firmware_version )
             print("testing body type")
-           if scale.latest_records[0].body_type == None:
+            if scale.latest_records[0].body_type == None:
                 bodytype = 5
             else:
                 bodytype = scale.latest_records[0].body_type
