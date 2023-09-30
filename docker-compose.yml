@@ -2,6 +2,8 @@ version: "3.9"
 services:
   wyzegarminconnect:
     image: svanhoutte/wyzegarminconnect:latest
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
     restart: unless-stopped
     network_mode: "host"
     environment:
@@ -15,3 +17,4 @@ services:
     volumes:
       - "/etc/timezone:/etc/timezone:ro"
       - "/etc/localtime:/etc/localtime:ro"
+      - "./tokens:/wyze_garmin_sync/tokens"
