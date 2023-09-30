@@ -30,6 +30,12 @@ Additionally in order to improve portability and have a more plug and play solut
 Login/Pass/TOTP is not working anymore Wyze requires an API key and id to log in
 Visit the Wyze developer API portal to generate an API ID/KEY: https://developer-api-console.wyze.com/#/apikey/view
 
+For garmin authentication with 2FA :
+First run the docker compose this way : 
+docker compose run --rm wyzegarminconnect 
+You ll be prompted for the MFA code, enter it, this will create the token that will be valid for like 6 months. 
+Once the token is created you don't have to authenticate again as long as the token is valid and you can run the docker compose run -d
+
 ## Install through docker compose
 
 [![Docker](https://img.shields.io/docker/v/svanhoutte/wyzegarminconnect/latest?logo=docker)](https://hub.docker.com/repository/docker/svanhoutte/wyzegarminconnect)
@@ -43,6 +49,8 @@ Download the [docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync
     services:
       wyzegarminconnect:
         image: svanhoutte/wyzegarminconnect:latest
+        stdin_open: true # docker run -i
+        tty: true        # docker run -t
         restart: unless-stopped
         network_mode: "host"
         environment:
@@ -55,6 +63,8 @@ Download the [docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync
         volumes:
           - "/etc/timezone:/etc/timezone:ro"
           - "/etc/localtime:/etc/localtime:ro"
+          - "./tokens:/wyze_garmin_sync/tokens"
+
 
 The volumes are mounted to sync logs in the containers and the host.
 Then do the `docker compose up`
