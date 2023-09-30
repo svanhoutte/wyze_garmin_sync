@@ -1,7 +1,7 @@
 FROM python:slim-bullseye
 MAINTAINER Sebastien Vanhoutte
 RUN apt-get update &&  apt-get install --no-install-recommends -y gcc git cron libc6-dev
-RUN pip install wyze_sdk garmin-uploader
+RUN pip install wyze_sdk garth
 RUN mkdir /wyze_garmin_sync
 WORKDIR /
 RUN git clone https://github.com/svanhoutte/wyze_garmin_sync.git
