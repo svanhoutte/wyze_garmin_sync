@@ -33,7 +33,7 @@ Visit the Wyze developer API portal to generate an API ID/KEY: https://developer
 For garmin authentication with 2FA :
 First run the docker compose this way : 
 docker compose run --rm wyzegarminconnect 
-You ll be prompted for the MFA code, enter it, this will create the token that will be valid for like 6 months. 
+You ll be prompted for the MFA code, enter it, this will create the token that will be valid for one year. 
 Once the token is created you don't have to authenticate again as long as the token is valid and you can run the docker compose run -d
 
 ## Install through docker compose
