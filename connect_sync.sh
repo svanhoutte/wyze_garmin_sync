@@ -12,7 +12,7 @@ if md5sum -c /wyze_garmin_sync/cksum.txt; then
 echo "no new measurment"
 exit 0
 else
-if /usr/local/bin/gupload -u $Garmin_username -p $Garmin_password  -v 1 /wyze_garmin_sync/wyze_scale.fit; then
+if python3 ./2FA.py ./wyze_scale.fit; then
 echo "file uploaded"
 md5sum /wyze_garmin_sync/wyze_scale.fit > /wyze_garmin_sync/cksum.txt
 exit 0
