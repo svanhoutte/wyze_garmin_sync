@@ -20,9 +20,9 @@
 ***
 **Sync the Wyze scale with Garmin connect**
 
-The python script collect the data from your Wyze account and create the .fit file to be uploaded to Garmin. The script shell allows you to leverage  [Garmin-uploader](https://github.com/La0/garmin-uploader), and [Wyze_SDK](https://github.com/shauntarves/wyze-sdk) to automatically upload the last measurement you took on your Wyze smart scale to Garmin Connect.
+The python script collect the data from your Wyze account and create the .fit file to be uploaded to Garmin. The script shell allows you to leverage  [Garth](https://github.com/matin/garth) for the authentication, and [Wyze_SDK](https://github.com/shauntarves/wyze-sdk) to automatically upload the last measurement you took on your Wyze smart scale to Garmin Connect.
 
-The solution has been updated to support 2FA and now auto-discover the scale. 
+The solution has been updated to support 2FA for Garmin and Wyze and now auto-discover the scale. 
 Additionally in order to improve portability and have a more plug and play solution you can now enjoy a docker version
 
 ## Authentication 
@@ -32,7 +32,9 @@ Visit the Wyze developer API portal to generate an API ID/KEY: https://developer
 
 For garmin authentication with 2FA :
 First run the docker compose this way : 
-docker compose run --rm wyzegarminconnect 
+
+    docker compose run --rm wyzegarminconnect 
+
 You ll be prompted for the MFA code, enter it, this will create the token that will be valid for one year. 
 Once the token is created you don't have to authenticate again as long as the token is valid and you can run the docker compose run -d
 
@@ -92,9 +94,9 @@ You ll need also a linux environment most of the recent distribution should work
 
     $ pip install wyze_sdk
 
-#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-garmin-uploader)Installation of Garmin-uploader
+#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-garth)Installation of Garmin-uploader
 
-    $ pip install garmin-uploader
+    $ pip install garth
 
 #### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-the-script-shell)Installation of the script shell
 
