@@ -1,4 +1,0 @@
-Type,Local Number,Message,Field 1,Value 1,Units 1,Field 2,Value 2,Units 2,Field 3,Value 3,Units 3,Field 4,Value 4,Units 4,Field 5,Value 5,Units 5,Field 6,Value 6,Units 6,Field 7,Value 7,Units 7,Field 8,Value 8,Units 8,Field 9,Value 9,Units 9,Field 10,Value 10,Units 10
-Definition,0,file_id,type,1,,manufacturer,1,,product,1,,serial_number,1,,,,,,,,,,,,,,,,,,,
-Data,0,file_id,type,9,,manufacturer,11,,product,1,,serial_number,1,,,,,,,,,,,,,,,,,,,
-Definition,0,weight_scale,timestamp,1,,weight,1,,percent_fat,1,,percent_hydration,1,,muscle_mass,1,,physique_rating,1,,basal_met,1,,visceral_fat_rating,1,,bone_mass,1,,metabolic_age,1,

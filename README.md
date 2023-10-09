@@ -1,3 +1,4 @@
+
 # Wyze Connect Sync
 ***
 
@@ -18,23 +19,31 @@
 
 
 ***
-**Sync the Wyze scale with Garmin connect**
+**Sync the Wyze scale with Garmin connect v2.0.0**
 
-The python script collect the data from your Wyze account and create the .fit file to be uploaded to Garmin. The script shell allows you to leverage  [Garmin-uploader](https://github.com/La0/garmin-uploader), and [Wyze_SDK](https://github.com/shauntarves/wyze-sdk) to automatically upload the last measurement you took on your Wyze smart scale to Garmin Connect.
+The python script collect the data from your Wyze account and create the .fit file to be uploaded to Garmin. The script leverage  [Garth](https://github.com/matin/garth), and [Wyze_SDK](https://github.com/shauntarves/wyze-sdk) to automatically upload the last measurement you took on your Wyze smart scale to Garmin Connect.
 
-The solution has been updated to support 2FA and now auto-discover the scale. 
-Additionally in order to improve portability and have a more plug and play solution you can now enjoy a docker version
+The V2.0.0 is 100% python based and doesn't require anymore a shell script.
+Support 2FA for Garmin and Wyze and scale auto-discovery. 
+Python package is not yet available but docker version is available on alpine python based image.
 
 ## Authentication 
 
+**Wyze authentication** 
 Login/Pass/TOTP is not working anymore Wyze requires an API key and id to log in
 Visit the Wyze developer API portal to generate an API ID/KEY: https://developer-api-console.wyze.com/#/apikey/view
 
-For garmin authentication with 2FA :
+**Garmin authentication**
+For Garmin authentication with 2FA :
 First run the docker compose this way : 
-docker compose run --rm wyzegarminconnect 
-You ll be prompted for the MFA code, enter it, this will create the token that will be valid for one year. 
-Once the token is created you don't have to authenticate again as long as the token is valid and you can run the docker compose run -d
+
+    docker compose run --rm wyzegarminconnect 
+
+You ll be prompted for the 2FA code, enter it, this will create the token that will be valid for one year. 
+Once the token is created you don't have to authenticate again as long as the token is valid and you can run the 
+
+    docker compose run -d
+    docker compose logs -f
 
 ## Install through docker compose
 
@@ -67,7 +76,10 @@ Download the [docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync
 
 
 The volumes are mounted to sync logs in the containers and the host.
-Then do the `docker compose up`
+Then do the 
+
+    docker compose up -d
+    docker compose logs -f
 
 
 ## Legacy install
@@ -84,7 +96,7 @@ This requires Python 3.8 and above. If you're unsure how to check what version o
     
     python3 --version
 
-You ll need also a linux environment most of the recent distribution should work.
+You ll need also a Linux environment most of the recent distribution should work.
 
 ### [](https://github.com/svanhoutte/wyze_garmin_sync#installation)Installation
 
@@ -92,17 +104,17 @@ You ll need also a linux environment most of the recent distribution should work
 
     $ pip install wyze_sdk
 
-#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-garmin-uploader)Installation of Garmin-uploader
+#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-garth)Installation of Garth
 
-    $ pip install garmin-uploader
+    $ pip install garth
 
-#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-the-script-shell)Installation of the script shell
+#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-the-script-shell)Installation of the python script
 
 First clone the repository 
 
     git clone https://github.com/svanhoutte/wyze_garmin_sync.git
 
-Edit the script shell connect_sync.legacy.sh to enter your credentials.
+Provide and export your credentials in your shell environment 
 
     WYZE_EMAIL=
     WYZE_PASSWORD=
@@ -111,17 +123,24 @@ Edit the script shell connect_sync.legacy.sh to enter your credentials.
     WYZE_API_KEY=
     Garmin_username=
     Garmin_password=
-	cd ~/path_to_your_script/
+    export WYZE_API_KEY
+    export WYZE_KEY_ID
+    export WYZE_EMAIL
+    export WYZE_PASSWORD
+    export Garmin_username
+    export Garmin_password
 
 #### [](https://github.com/svanhoutte/wyze_garmin_sync#run-the-script)Run the script
 
-In your working directory run connect_sync.legacy.sh and if all goes well you should be able to see your data in garmin connect
+In your working directory add the execution right on the script 
+`chmod +x ./scale.py`  Then run `./scale.py` and if all goes well you should be able to see your data in Garmin connect.
+This should be done at least once before setting up the cron as if you have 2FA for Garmin to allow you to enter the 2 step of authentication.
 
 #### [](https://github.com/svanhoutte/wyze_garmin_sync#setup-with-cron)Setup with Cron
 
-Will run the script every 10 min to get if a new measurment has been made on the scale.
+Will run the script every 10 min to get if a new measurement has been made on the scale.
 
-    */10 * * * * path_to_script/connect_sync.legacy.sh 2>&1 | /usr/bin/logger -t garminsync
+    */10 * * * * path_to_script/scale.py 2>&1 | /usr/bin/logger -t garminsync
 
 ***
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/sebastienv)
