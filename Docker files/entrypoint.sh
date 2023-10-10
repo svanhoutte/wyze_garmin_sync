@@ -10,5 +10,5 @@ echo Garmin_username=$Garmin_username >> /etc/cron.d/garmin_wyze_scheduler
 echo "*/10 * * * * { printf \"\%s: \" \"\$(date \"+\%F \%T\")\"; /wyze_garmin_sync/scale.py ; } >/proc/1/fd/1 2>/proc/1/fd/2" >> /etc/cron.d/garmin_wyze_scheduler
 chmod 0644 /etc/cron.d/garmin_wyze_scheduler && crontab /etc/cron.d/garmin_wyze_scheduler
 chmod 0770 /wyze_garmin_sync/scale.py
-./scale.py
+/wyze_garmin_sync/scale.py
 cron -f
