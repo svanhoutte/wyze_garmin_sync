@@ -5,7 +5,10 @@ ARG BUILDPLATFORM
 RUN echo "I am running on $BUILDPLATFORM, building for $TARGETPLATFORM"
 RUN if [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then \
 apt-get update &&  apt-get install --no-install-recommends -y gcc git cron libc6-dev \
-RUN apt-get update &&  apt-get install --no-install-recommends -y git cron
+else \
+apt-get update &&  apt-get install --no-install-recommends -y git cron \
+fi
+#RUN apt-get update &&  apt-get install --no-install-recommends -y git cron
 RUN pip install wyze_sdk garth
 RUN mkdir /wyze_garmin_sync
 WORKDIR /
