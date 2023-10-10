@@ -2,7 +2,6 @@ FROM python:3-slim
 MAINTAINER Sebastien Vanhoutte
 RUN if [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then \
 apt-get update &&  apt-get install --no-install-recommends -y gcc git cron libc6-dev \
-fi
 RUN apt-get update &&  apt-get install --no-install-recommends -y git cron
 RUN pip install wyze_sdk garth
 RUN mkdir /wyze_garmin_sync
