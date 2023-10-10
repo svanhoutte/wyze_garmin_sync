@@ -1,5 +1,8 @@
 FROM python:3-slim
 MAINTAINER Sebastien Vanhoutte
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+RUN echo "I am running on $BUILDPLATFORM, building for $TARGETPLATFORM"
 RUN if [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then \
 apt-get update &&  apt-get install --no-install-recommends -y gcc git cron libc6-dev \
 RUN apt-get update &&  apt-get install --no-install-recommends -y git cron
