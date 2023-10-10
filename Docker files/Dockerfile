@@ -4,9 +4,9 @@ ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 RUN echo "I am running on $BUILDPLATFORM, building for $TARGETPLATFORM"
 RUN if [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then \
-apt-get update &&  apt-get install --no-install-recommends -y gcc git cron libc6-dev \
+apt-get update &&  apt-get install --no-install-recommends -y gcc git cron libc6-dev; \
 else \
-apt-get update &&  apt-get install --no-install-recommends -y git cron \
+apt-get update &&  apt-get install --no-install-recommends -y git cron; \
 fi
 #RUN apt-get update &&  apt-get install --no-install-recommends -y git cron
 RUN pip install wyze_sdk garth
