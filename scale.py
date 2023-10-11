@@ -54,23 +54,43 @@ def generate_fit_file(scale):
     fit = FitEncoder_Weight()
     timestamp = math.trunc(scale.latest_records[0].measure_ts / 1000)
     weight_in_kg = scale.latest_records[0].weight * 0.45359237
+
+    data_keys = {
+        'percent_fat': scale.latest_records[0].body_fat,
+        'percent_hydration': scale.latest_records[0].body_water,
+        'visceral_fat_mass': scale.latest_records[0].body_vfr,
+        'bone_mass': scale.latest_records[0].bone_mineral,
+        'muscle_mass': scale.latest_records[0].muscle,
+        'basal_met': scale.latest_records[0].bmr,
+        'physique_rating': scale.latest_records[0].body_type or 5,
+        'active_met': int(float(scale.latest_records[0].bmr) * 1.25),
+        'metabolic_age': scale.latest_records[0].metabolic_age,
+        'visceral_fat_rating': scale.latest_records[0].body_vfr,
+        'bmi': scale.latest_records[0].bmi
+    }
+    data = {}
+    for key, value in data_keys.items():
+        if value is not None:
+            data[key] = float(value)
+        else:
+            data[key] = None
     fit.write_file_info(time_created=timestamp)
     fit.write_file_creator()
     fit.write_device_info(timestamp=timestamp)
     fit.write_weight_scale(
         timestamp=timestamp,
         weight=weight_in_kg,
-        percent_fat=float(scale.latest_records[0].body_fat),
-        percent_hydration=float(scale.latest_records[0].body_water),
-        visceral_fat_mass=float(scale.latest_records[0].body_vfr),
-        bone_mass=float(scale.latest_records[0].bone_mineral),
-        muscle_mass=float(scale.latest_records[0].muscle),
-        basal_met=float(scale.latest_records[0].bmr),
-        physique_rating=float(scale.latest_records[0].body_type or 5),
-        active_met=int(float(scale.latest_records[0].bmr) * 1.25),
-        metabolic_age=float(scale.latest_records[0].metabolic_age),
-        visceral_fat_rating=float(scale.latest_records[0].body_vfr),
-        bmi=float(scale.latest_records[0].bmi),
+        percent_fat = data.get('percent_fat'),
+        percent_hydration = data.get('percent_hydration'),
+        visceral_fat_mass = data.get('visceral_fat_mass'),
+        bone_mass = data.get('bone_mass'),
+        muscle_mass = data.get('muscle_mass'),
+        basal_met = data.get('basal_met'),
+        physique_rating = data.get('physique_rating'),
+        active_met = data.get('active_met'),
+        metabolic_age = data.get('metabolic_age'),
+        visceral_fat_rating = data.get('visceral_fat_rating'),
+        bmi = data.get('bmi'),
     )
     fit.finish()
     with open("wyze_scale.fit", "wb") as fitfile:
@@ -92,36 +112,42 @@ def main():
                 generate_fit_file(scale)
                 print("Fit data generated...")
 
-                try:
-                    with open("wyze_scale.fit", "rb") as fitfile:
-                        cksum = hashlib.md5(fitfile.read()).hexdigest()
+                fitfile_path = "wyze_scale.fit"
+                cksum_file_path = "./cksum.txt"
 
-                    if not os.path.exists("./cksum.txt"):
-                        print("No chksum detected. Uploading fit file and creating chksum...")
-                        if upload_to_garmin('wyze_scale.fit'):
-                            print("File uploaded successfully.")
-                            with open("./cksum.txt", "w") as cksum_file:
-                                cksum_file.write(cksum)
-                                print("cksum.txt created.")
-                        else:
-                            print("File upload failed.")
+                # Calculate checksum of the fit file
+                with open(fitfile_path, "rb") as fitfile:
+                    cksum = hashlib.md5(fitfile.read()).hexdigest()
 
-                    with open("./cksum.txt", "r") as cksum_file:
+                # Check if cksum.txt exists and read stored checksum
+                if os.path.exists(cksum_file_path):
+                    with open(cksum_file_path, "r") as cksum_file:
                         stored_cksum = cksum_file.read().strip()
 
+                    # Compare calculated checksum with stored checksum
                     if cksum == stored_cksum:
                         print("No new measurement")
                     else:
                         print("New measurement detected. Uploading file...")
-                        if upload_to_garmin('wyze_scale.fit'):
+                        # Upload the fit file to Garmin
+                        if upload_to_garmin(fitfile_path):
                             print("File uploaded successfully.")
-                            with open("./cksum.txt", "w") as cksum_file:
+                            # Update cksum.txt with the new checksum
+                            with open(cksum_file_path, "w") as cksum_file:
                                 cksum_file.write(cksum)
                         else:
                             print("File upload failed.")
-
-                except OSError as e:
-                    print(f"Got an error: {e}")
+                else:
+                    print("No chksum detected. Uploading fit file and creating chksum...")
+                    # Upload the fit file to Garmin
+                    if upload_to_garmin(fitfile_path):
+                        print("File uploaded successfully.")
+                        # Create cksum.txt and write the checksum
+                        with open(cksum_file_path, "w") as cksum_file:
+                            cksum_file.write(cksum)
+                        print("cksum.txt created.")
+                    else:
+                        print("File upload failed.")
 
 if __name__ == "__main__":
     main()
