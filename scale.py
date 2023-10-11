@@ -97,9 +97,14 @@ def main():
                         cksum = hashlib.md5(fitfile.read()).hexdigest()
 
                     if not os.path.exists("./cksum.txt"):
-                        with open("./cksum.txt", "w") as cksum_file:
-                            cksum_file.write(cksum)
-                            print("cksum.txt created.")
+                        print("No chksum detected. Uploading fit file and creating chksum...")
+                        if upload_to_garmin('wyze_scale.fit'):
+                            print("File uploaded successfully.")
+                            with open("./cksum.txt", "w") as cksum_file:
+                                cksum_file.write(cksum)
+                                print("cksum.txt created.")
+                        else:
+                            print("File upload failed.")
 
                     with open("./cksum.txt", "r") as cksum_file:
                         stored_cksum = cksum_file.read().strip()
