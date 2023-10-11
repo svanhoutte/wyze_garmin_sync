@@ -26,18 +26,18 @@ def login_to_wyze():
 
 def upload_to_garmin(file_path):
     try:
-        garth.resume('./tokens')
+        garth.resume('/wyze_garmin_sync/tokens')
         garth.client.username
     except:
         try:
             garth.login(GARMIN_USERNAME, GARMIN_PASSWORD)
-            garth.save('./tokens')
+            garth.save('/wyze_garmin_sync/tokens')
         except:
             email = input("Enter Garmin email address: ")
             password = getpass("Enter Garmin password: ")
             try:
                 garth.login(email, password)
-                garth.save('./tokens')
+                garth.save('/wyze_garmin_sync/tokens')
             except Exception as exc:
                 print(repr(exc))
                 exit()
@@ -112,8 +112,8 @@ def main():
                 generate_fit_file(scale)
                 print("Fit data generated...")
 
-                fitfile_path = "wyze_scale.fit"
-                cksum_file_path = "./cksum.txt"
+                fitfile_path = "/wyze_garmin_sync/wyze_scale.fit"
+                cksum_file_path = "/wyze_garmin_sync/cksum.txt"
 
                 # Calculate checksum of the fit file
                 with open(fitfile_path, "rb") as fitfile:
