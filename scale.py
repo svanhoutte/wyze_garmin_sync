@@ -63,7 +63,7 @@ def generate_fit_file(scale):
         'muscle_mass': scale.latest_records[0].muscle,
         'basal_met': scale.latest_records[0].bmr,
         'physique_rating': scale.latest_records[0].body_type or 5,
-        'active_met': int(float(scale.latest_records[0].bmr) * 1.25),
+        'active_met': scale.latest_records[0].bmr,
         'metabolic_age': scale.latest_records[0].metabolic_age,
         'visceral_fat_rating': scale.latest_records[0].body_vfr,
         'bmi': scale.latest_records[0].bmi
@@ -74,6 +74,10 @@ def generate_fit_file(scale):
             data[key] = float(value)
         else:
             data[key] = None
+    if data.get('basal_met') = None:
+        data['active_met'] = None
+    else:
+        data['active_met'] = int(float(scale.latest_records[0].bmr) * 1.25)
     fit.write_file_info(time_created=timestamp)
     fit.write_file_creator()
     fit.write_device_info(timestamp=timestamp)
