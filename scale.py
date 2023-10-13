@@ -74,7 +74,7 @@ def generate_fit_file(scale):
             data[key] = float(value)
         else:
             data[key] = None
-    if data.get('basal_met') = None:
+    if data.get('basal_met') is None:
         data['active_met'] = None
     else:
         data['active_met'] = int(float(scale.latest_records[0].bmr) * 1.25)
