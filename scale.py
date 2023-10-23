@@ -102,7 +102,7 @@ def generate_fit_file(scale):
 
 def main():
     access_token = login_to_wyze()
-
+    os.chdir("/wyze_garmin_sync")
     if access_token:
         client = Client(token=access_token)
         for device in client.devices_list():
