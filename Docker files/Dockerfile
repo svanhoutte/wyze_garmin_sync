@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM python:alpine
 LABEL maintainer="Sebastien Vanhoutte"
 RUN pip install wyze_sdk garth
 RUN mkdir /wyze_garmin_sync
