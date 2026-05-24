@@ -1,8 +1,10 @@
-FROM python:alpine
+FROM python:3.12-alpine
 LABEL maintainer="Sebastien Vanhoutte"
 RUN apk add --no-cache ca-certificates && update-ca-certificates
 RUN pip install wyze_sdk garth
 RUN mkdir /wyze_garmin_sync
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 WORKDIR /wyze_garmin_sync
 COPY ./*.py /wyze_garmin_sync
 COPY ./entrypoint.sh /usr/bin/
