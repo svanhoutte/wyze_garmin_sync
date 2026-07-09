@@ -1,6 +1,11 @@
 FROM python:3.12-alpine
 LABEL maintainer="Sebastien Vanhoutte"
-RUN apk add --no-cache ca-certificates uv && update-ca-certificates
+RUN apk add --no-cache ca-certificates uv curl openssl
+RUN curl -sL https://cacerts.digicert.com/DigiCertGlobalRootCA.crt -o DigiCertGlobalRootCA_raw.crt
+RUN openssl x509 -inform der -in DigiCertGlobalRootCA_raw.crt -out DigiCertGlobalRootCA.crt
+RUN mkdir -p /usr/local/share/ca-certificates/
+RUN cp DigiCertGlobalRootCA.crt /usr/local/share/ca-certificates/DigiCertGlobalRootCA.crt
+RUN update-ca-certificates
 RUN uv pip install --system wyze_sdk garth 
 RUN mkdir /wyze_garmin_sync
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
