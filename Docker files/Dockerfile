@@ -16,7 +16,7 @@ RUN apk add --no-cache ca-certificates uv \
 WORKDIR /wyze_garmin_sync
 
 COPY requirements.txt ./
-RUN uv pip install --system --no-cache -r requirements.txt
+RUN uv pip install --system --no-cache wyze_sdk garth
 
 COPY *.py ./
 COPY entrypoint.sh /usr/bin/entrypoint.sh
