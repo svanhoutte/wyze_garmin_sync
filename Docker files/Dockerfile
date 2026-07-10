@@ -5,8 +5,8 @@ LABEL maintainer="Sebastien Vanhoutte"
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
-RUN apk add --no-cache ca-certificates uv \
-    && apk add --no-cache --virtual .cert-deps curl openssl git \
+RUN apk add --no-cache ca-certificates uv git \
+    && apk add --no-cache --virtual .cert-deps curl openssl \
     && curl -fsSL https://cacerts.digicert.com/DigiCertGlobalRootCA.crt -o /tmp/DigiCertGlobalRootCA_raw.crt \
     && openssl x509 -inform der -in /tmp/DigiCertGlobalRootCA_raw.crt -out /usr/local/share/ca-certificates/DigiCertGlobalRootCA.crt \
     && update-ca-certificates \
