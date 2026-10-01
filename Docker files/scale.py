@@ -101,21 +101,54 @@ def generate_fit_file(scale):
         fitfile.write(fit.getvalue())
 
 def main():
-    access_token = login_to_wyze()
     os.chdir("/wyze_garmin_sync")
-    if access_token:
-        client = Client(token=access_token)
-        for device in client.devices_list():
-            if device.type == "WyzeScale":
+
+    client, tokens = login_to_wyze()
+
+    if client is None:
+        print("Unable to establish Wyze session.")
+        return
+
+    #
+    # First try using the cached access token.
+    #
+    try:
+        devices = client.devices_list()
+
+    except Exception as e:
+        print(f"Cached Wyze token failed: {e}")
+
+        #
+        # Do NOT perform another username/password login.
+        # Try the refresh token instead.
+        #
+        if not refresh_wyze_token(client, tokens):
+            print(
+                "Wyze session could not be refreshed. "
+                "Stopping this run to avoid repeated login attempts."
+            )
+            return
+
+        #
+        # Retry once with refreshed token.
+        #
+        try:
+            devices = client.devices_list()
+
+        except Exception as e:
+            print(f"Wyze API still unavailable after token refresh: {e}")
+            return
+
+    for device in devices:
+        if device.type == "WyzeScale":
                 scale = client.scales.info(device_mac=device.mac)
                 print(f"Scale found with MAC {device.mac}. Latest record is:")
                 print(scale.latest_records)
                 print(f"Body Type: {scale.latest_records[0].body_type or 5}")
-
                 print("Generating fit data...")
                 generate_fit_file(scale)
                 print("Fit data generated...")
-
+          
                 fitfile_path = "/wyze_garmin_sync/wyze_scale.fit"
                 cksum_file_path = "/wyze_garmin_sync/cksum.txt"
 
