@@ -1,10 +1,16 @@
 #!/usr/local/bin/python3
 import math
 import os
+import json
+import hashlib
+
+from requests.exceptions import HTTPError, RequestException
+
 from wyze_sdk import Client
 from wyze_sdk.errors import WyzeApiError
+
 from fit import FitEncoder_Weight
-import hashlib
+
 import garth
 from getpass import getpass
 
@@ -14,15 +20,151 @@ WYZE_KEY_ID = os.environ.get('WYZE_KEY_ID')
 WYZE_API_KEY = os.environ.get('WYZE_API_KEY')
 GARMIN_USERNAME = os.environ.get('Garmin_username')
 GARMIN_PASSWORD = os.environ.get('Garmin_password')
+WYZE_TOKEN_FILE = os.environ.get('token')
+
+def save_wyze_tokens(tokens):
+    """
+    Save Wyze authentication information in the persistent tokens volume.
+    """
+    os.makedirs(os.path.dirname(WYZE_TOKEN_FILE), exist_ok=True)
+
+    tmp_file = WYZE_TOKEN_FILE + ".tmp"
+
+    with open(tmp_file, "w") as f:
+        json.dump(tokens, f)
+
+    os.chmod(tmp_file, 0o600)
+    os.replace(tmp_file, WYZE_TOKEN_FILE)
+
+
+def load_wyze_tokens():
+    """
+    Load cached Wyze authentication information.
+    """
+    try:
+        with open(WYZE_TOKEN_FILE, "r") as f:
+            tokens = json.load(f)
+
+        if not tokens.get("access_token"):
+            return None
+
+        return tokens
+
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
 
 def login_to_wyze():
+    """
+    Use cached Wyze tokens whenever possible.
+
+    Username/password authentication is only performed when there
+    is no cached token.
+    """
+
+    tokens = load_wyze_tokens()
+
+    if tokens:
+        print("Using cached Wyze authentication token.")
+
+        client = Client(
+            token=tokens["access_token"],
+            refresh_token=tokens.get("refresh_token")
+        )
+
+        # Required by the Wyze Scale API.
+        if tokens.get("user_id"):
+            client._user_id = tokens["user_id"]
+
+        return client, tokens
+
+    print("No cached Wyze token found.")
+    print("Performing initial Wyze authentication...")
+
     try:
-        response = Client().login(email=WYZE_EMAIL, password=WYZE_PASSWORD, key_id=WYZE_KEY_ID, api_key=WYZE_API_KEY)
-        access_token = response.get('access_token')
-        return access_token
+        client = Client()
+
+        response = client.login(
+            email=WYZE_EMAIL,
+            password=WYZE_PASSWORD,
+            key_id=WYZE_KEY_ID,
+            api_key=WYZE_API_KEY
+        )
+
+        tokens = {
+            "access_token": response["access_token"],
+            "refresh_token": response["refresh_token"],
+            "user_id": response["user_id"]
+        }
+
+        save_wyze_tokens(tokens)
+
+        print("Wyze authentication successful.")
+        print("Wyze authentication tokens saved.")
+
+        return client, tokens
+
+    except HTTPError as e:
+        status = (
+            e.response.status_code
+            if e.response is not None
+            else None
+        )
+
+        if status == 429:
+            print(
+                "Wyze authentication rate limited (HTTP 429). "
+                "Stopping this run without retrying."
+            )
+        else:
+            print(f"Wyze HTTP authentication error: {e}")
+
     except WyzeApiError as e:
-        print(f"Wyze API Error: {e}")
-        return None
+        print(f"Wyze API authentication error: {e}")
+
+    except RequestException as e:
+        print(f"Wyze network error: {e}")
+
+    except Exception as e:
+        print(f"Unexpected Wyze authentication error: {e}")
+
+    return None, None
+
+
+def refresh_wyze_token(client, tokens):
+    """
+    Refresh the Wyze access token using the refresh token.
+
+    This does NOT perform another username/password login.
+    """
+
+    if not tokens:
+        print("No cached Wyze token information available.")
+        return False
+
+    if not tokens.get("refresh_token"):
+        print("No Wyze refresh token available.")
+        return False
+
+    try:
+        print("Refreshing Wyze authentication token...")
+
+        response = client.refresh_token()
+
+        refreshed = response["data"]
+
+        tokens["access_token"] = refreshed["access_token"]
+        tokens["refresh_token"] = refreshed["refresh_token"]
+
+        save_wyze_tokens(tokens)
+
+        print("Wyze authentication token refreshed.")
+
+        return True
+
+    except Exception as e:
+        print(f"Unable to refresh Wyze authentication token: {e}")
+        return False
 
 def upload_to_garmin(file_path):
     try:
