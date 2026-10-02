@@ -19,116 +19,766 @@
 
 
 ***
-**Sync the Wyze scale with Garmin connect v2.0.0**
 
-The python script collect the data from your Wyze account and create the .fit file to be uploaded to Garmin. The script leverage  [Garth](https://github.com/matin/garth), and [Wyze_SDK](https://github.com/shauntarves/wyze-sdk) to automatically upload the last measurement you took on your Wyze smart scale to Garmin Connect.
+# Wyze Garmin Sync
 
-The V2.0.0 is 100% python based and doesn't require anymore a shell script.
-Support 2FA for Garmin and Wyze and scale auto-discovery. 
-Python package is not yet available but docker version is available on alpine python based image.
+Automatically synchronize body-composition measurements from a **Wyze Scale** to **Garmin Connect**.
 
-## Authentication 
+The application retrieves the latest measurement from your Wyze account and uploads the body-composition data to Garmin Connect.
 
-**Wyze authentication** 
-Login/Pass/TOTP is not working anymore Wyze requires an API key and id to log in
-Visit the Wyze developer API portal to generate an API ID/KEY: https://developer-api-console.wyze.com/#/apikey/view
+The Docker container performs a synchronization when it starts and then checks for new measurements every **10 minutes**.
 
-**Garmin authentication**
-For Garmin authentication with 2FA :
-First run the docker compose this way : 
+---
 
-    docker compose run --rm wyzegarminconnect 
+## Features
 
-You ll be prompted for the 2FA code, enter it, this will create the token that will be valid for one year. 
-Once the token is created you don't have to authenticate again as long as the token is valid and you can run the 
+- Automatic Wyze Scale discovery
+- Synchronizes the latest Wyze Scale measurement to Garmin Connect
+- Supports body-composition data including:
+  - Weight
+  - Body fat
+  - Body water
+  - Bone mass
+  - Muscle mass
+  - Basal metabolic rate
+  - Active metabolic rate
+  - Metabolic age
+  - Visceral fat rating
+  - BMI
+  - Physique/body type
+- Persistent Wyze authentication tokens
+- Persistent Garmin authentication tokens
+- Garmin MFA / two-factor authentication support
+- Automatic Garmin token refresh
+- Automatic Wyze token refresh
+- Duplicate measurement detection
+- Automatic execution every 10 minutes
+- Docker deployment
 
-    docker compose run -d
-    docker compose logs -f
+---
 
-## Install through docker compose
+# Authentication
 
-[![Docker](https://img.shields.io/docker/v/svanhoutte/wyzegarminconnect/latest?logo=docker)](https://hub.docker.com/repository/docker/svanhoutte/wyzegarminconnect)
-![Docker](https://badgen.net/badge/color/arm64/yellow?icon=docker&label=) ![Docker](https://badgen.net/badge/color/arm/orange?icon=docker&label=) ![Docker](https://badgen.net/badge/color/amd64/blue?icon=docker&label=) 
+Both Wyze and Garmin use persistent authentication tokens.
 
-Docker image is now available for amd64, arm64 and arm.
+This is important because repeatedly performing username/password authentication can trigger API rate limits from both services.
 
-Download the [docker-compose.yml](https://github.com/svanhoutte/wyze_garmin_sync/blob/main/docker-compose.yml "docker-compose.yml") and add your credentials:
+The Docker container therefore stores authentication information in:
 
-    version: "3.9"
-    services:
-      wyzegarminconnect:
-        image: svanhoutte/wyzegarminconnect:latest
-        stdin_open: true # docker run -i
-        tty: true        # docker run -t
-        restart: unless-stopped
-        network_mode: "host"
-        environment:
-          WYZE_EMAIL: "wyze username"
-          WYZE_PASSWORD: "wyze password"
-          WYZE_KEY_ID: "ID"
-          WYZE_API_KEY: "KEY"
-          Garmin_username: "garmin username"
-          Garmin_password: "garmin password"
-        volumes:
-          - "/etc/timezone:/etc/timezone:ro"
-          - "/etc/localtime:/etc/localtime:ro"
-          - "./tokens:/wyze_garmin_sync/tokens"
+```text
+/wyze_garmin_sync/tokens
+```
 
+The Docker Compose configuration maps this to:
 
-The volumes are mounted to sync logs in the containers and the host.
-Then do the 
+```text
+./tokens
+```
 
-    docker compose up -d
-    docker compose logs -f
+on the Docker host.
 
+After the initial authentication, the directory should contain files similar to:
 
-## Legacy install
+```text
+tokens/
+├── wyze_tokens.json
+└── garmin_tokens.json
+```
 
-### Requirements
+Do **not** delete this directory unless you intentionally want to authenticate again.
 
-This requires Python 3.8 and above. If you're unsure how to check what version of Python you're on, you can check it using the following:
+---
 
-> **Note:**  You may need to use  `python3`  before your commands to ensure you use the correct Python path. e.g.  `python3 --version`
+# Wyze Authentication
 
-    python --version
-    
-    -- or --
-    
-    python3 --version
+Wyze requires the following environment variables:
 
-You ll need also a Linux environment most of the recent distribution should work.
+```text
+WYZE_EMAIL
+WYZE_PASSWORD
+WYZE_KEY_ID
+WYZE_API_KEY
+WYZE_TOKEN_FILE
+```
 
-### [](https://github.com/svanhoutte/wyze_garmin_sync#installation)Installation
+A Wyze API Key and Key ID must be created for your Wyze account.
 
-#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-wyze-sdk)Installation of Wyze SDK
+The default token location used by the container is:
 
-    $ pip install wyze_sdk
+```text
+/wyze_garmin_sync/tokens/wyze_tokens.json
+```
 
-#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-garth)Installation of Garth
+This is configured with:
 
-    $ pip install garth
+```yaml
+WYZE_TOKEN_FILE: "/wyze_garmin_sync/tokens/wyze_tokens.json"
+```
 
-#### [](https://github.com/svanhoutte/wyze_garmin_sync#installation-of-the-script-shell)Installation of the python script
+The application performs a full Wyze username/password authentication only when a cached token does not already exist.
 
-First clone the repository 
+After the first successful authentication it creates:
 
-    git clone https://github.com/svanhoutte/wyze_garmin_sync.git
+```text
+tokens/wyze_tokens.json
+```
 
-Provide and export your credentials in your shell environment 
+Subsequent executions reuse the stored access token.
 
-    WYZE_EMAIL=
-    WYZE_PASSWORD=
-    WYZE_TOTP=
-    WYZE_KEY_ID=
-    WYZE_API_KEY=
-    Garmin_username=
-    Garmin_password=
-    export WYZE_API_KEY
-    export WYZE_KEY_ID
-    export WYZE_EMAIL
-    export WYZE_PASSWORD
-    export Garmin_username
-    export Garmin_password
+If the Wyze access token expires, the application attempts to refresh it using the stored refresh token instead of performing another username/password login.
+
+This helps prevent Wyze authentication rate limiting such as:
+
+```text
+429 Client Error: Too Many Requests
+```
+
+---
+
+# Garmin Authentication
+
+Garmin authentication is handled using **python-garminconnect**.
+
+Older releases of this project used Garth. Garth is no longer used by the current Docker implementation.
+
+The Garmin token directory can be configured with:
+
+```text
+GARMINTOKENS
+```
+
+The Docker configuration uses:
+
+```yaml
+GARMINTOKENS: "/wyze_garmin_sync/tokens"
+```
+
+After successful Garmin authentication the following file is created:
+
+```text
+tokens/garmin_tokens.json
+```
+
+Normal scheduled synchronization uses this token instead of repeatedly authenticating with the Garmin username and password.
+
+Garmin access tokens are refreshed automatically when possible.
+
+---
+
+## Garmin MFA / Two-Factor Authentication
+
+If Garmin requires MFA, the initial Garmin authentication must be performed interactively.
+
+Run:
+
+```bash
+docker compose run --rm wyzegarminconnect
+```
+
+If no valid Garmin token exists, the application detects that it is running in an interactive terminal and starts the Garmin authentication process.
+
+If Garmin requests MFA you will see:
+
+```text
+Enter Garmin MFA code:
+```
+
+Enter the code provided by Garmin.
+
+After successful authentication you should see:
+
+```text
+Garmin authentication successful.
+Garmin token saved to /wyze_garmin_sync/tokens/garmin_tokens.json
+```
+
+The token is persisted on the Docker host as:
+
+```text
+./tokens/garmin_tokens.json
+```
+
+Future scheduled executions reuse this token and do not normally require another MFA login.
+
+---
+
+# Docker Installation
+
+Docker Compose is the recommended installation method.
+
+## 1. Create a Working Directory
+
+For example:
+
+```bash
+mkdir wyze-garmin-sync
+cd wyze-garmin-sync
+```
+
+---
+
+## 2. Create the Persistent Token Directory
+
+```bash
+mkdir -p tokens
+chmod 700 tokens
+```
+
+The directory will contain both Wyze and Garmin authentication tokens.
+
+---
+
+## 3. Configure Docker Compose
+
+Example `docker-compose.yml`:
+
+```yaml
+services:
+
+  wyzegarminconnect:
+
+    image: svanhoutte/wyzegarminconnect:latest
+
+    restart: unless-stopped
+
+    network_mode: "host"
+
+    environment:
+
+      # --------------------------------------------------
+      # Wyze
+      # --------------------------------------------------
+
+      WYZE_EMAIL: "your-wyze-email"
+      WYZE_PASSWORD: "your-wyze-password"
+
+      WYZE_KEY_ID: "your-wyze-key-id"
+      WYZE_API_KEY: "your-wyze-api-key"
+
+      # Persistent Wyze authentication token
+      WYZE_TOKEN_FILE: "/wyze_garmin_sync/tokens/wyze_tokens.json"
+
+      # --------------------------------------------------
+      # Garmin
+      # --------------------------------------------------
+
+      Garmin_username: "your-garmin-email"
+      Garmin_password: "your-garmin-password"
+
+      # Persistent Garmin authentication token directory
+      GARMINTOKENS: "/wyze_garmin_sync/tokens"
+
+    volumes:
+
+      # Container timezone
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/etc/localtime:/etc/localtime:ro"
+
+      # Persistent Wyze + Garmin authentication tokens
+      - "./tokens:/wyze_garmin_sync/tokens"
+```
+
+Replace the example credentials with your own.
+
+---
+
+# Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `WYZE_EMAIL` | Yes | Wyze account email |
+| `WYZE_PASSWORD` | Yes | Wyze account password |
+| `WYZE_KEY_ID` | Yes | Wyze API Key ID |
+| `WYZE_API_KEY` | Yes | Wyze API Key |
+| `WYZE_TOKEN_FILE` | No | Location of the persistent Wyze authentication file |
+| `Garmin_username` | Yes | Garmin Connect username/email |
+| `Garmin_password` | Yes | Garmin Connect password |
+| `GARMINTOKENS` | No | Directory containing the Garmin authentication token |
+
+The recommended Docker values are:
+
+```text
+WYZE_TOKEN_FILE=/wyze_garmin_sync/tokens/wyze_tokens.json
+GARMINTOKENS=/wyze_garmin_sync/tokens
+```
+
+The application also provides defaults for the token locations, but explicitly defining them in Docker Compose makes the configuration easier to understand and customize.
+
+---
+
+# First Run
+
+Stop any existing instance first:
+
+```bash
+docker compose down
+```
+
+Perform the first run interactively:
+
+```bash
+docker compose run --rm wyzegarminconnect
+```
+
+The application will:
+
+1. Look for a cached Wyze token.
+2. Authenticate with Wyze if a token does not exist.
+3. Create `wyze_tokens.json`.
+4. Discover the Wyze Scale.
+5. Retrieve the latest scale measurement.
+6. Look for a cached Garmin token.
+7. Start interactive Garmin authentication if no token exists.
+8. Request an MFA code if required by Garmin.
+9. Create `garmin_tokens.json`.
+10. Upload the latest body-composition measurement to Garmin.
+
+After the initial authentication, verify the token files:
+
+```bash
+ls -la tokens/
+```
+
+You should normally see:
+
+```text
+wyze_tokens.json
+garmin_tokens.json
+```
+
+---
+
+# Start Normal Operation
+
+Once both authentication tokens have been created:
+
+```bash
+docker compose up -d
+```
+
+View the logs with:
+
+```bash
+docker compose logs -f
+```
+
+The application runs automatically when the container starts and then approximately every 10 minutes.
+
+---
+
+# Authentication Flow
+
+## Wyze
+
+```text
+                 Wyze authentication
+                         │
+                         ▼
+              wyze_tokens.json exists?
+                  │              │
+                 YES             NO
+                  │              │
+                  ▼              ▼
+             Load token      Wyze login
+                  │              │
+                  │              ▼
+                  │       Save access +
+                  │       refresh tokens
+                  │              │
+                  └───────┬──────┘
+                          ▼
+                     Wyze API
+```
+
+If the access token expires:
+
+```text
+Access token expired
+        │
+        ▼
+Use refresh token
+        │
+        ▼
+Save new tokens
+```
+
+A username/password login is not performed during every scheduled execution.
+
+---
+
+## Garmin
+
+```text
+                Garmin authentication
+                        │
+                        ▼
+             garmin_tokens.json exists?
+                  │               │
+                 YES              NO
+                  │               │
+                  ▼               ▼
+             Load token      Interactive?
+                  │            │       │
+                  │           YES      NO
+                  │            │       │
+                  │            ▼       ▼
+                  │        Login +    Stop Garmin
+                  │          MFA      upload attempt
+                  │            │
+                  │            ▼
+                  │       Save Garmin
+                  │          token
+                  │            │
+                  └──────┬─────┘
+                         ▼
+                   Garmin Connect
+```
+
+A normal background cron execution will not wait indefinitely for an MFA prompt.
+
+If the Garmin token is missing, run:
+
+```bash
+docker compose run --rm wyzegarminconnect
+```
+
+to perform interactive authentication.
+
+---
+
+# Synchronization Flow
+
+```text
+Wyze Scale
+    │
+    ▼
+Wyze API
+    │
+    ▼
+Latest body-composition measurement
+    │
+    ▼
+Generate measurement checksum
+    │
+    ├── Same measurement
+    │        │
+    │        └── No upload
+    │
+    └── New measurement
+             │
+             ▼
+       Garmin Connect
+             │
+             ▼
+       Body Composition
+```
+
+The checksum prevents the same measurement from being continuously uploaded every 10 minutes.
+
+---
+
+# Updating the Container
+
+Authentication tokens are stored outside the container.
+
+This means a container upgrade normally does **not** require Wyze or Garmin authentication again.
+
+Update the image with:
+
+```bash
+docker compose pull
+docker compose up -d --force-recreate
+```
+
+Then monitor:
+
+```bash
+docker compose logs -f
+```
+
+Your existing:
+
+```text
+./tokens/wyze_tokens.json
+./tokens/garmin_tokens.json
+```
+
+will continue to be used.
+
+---
+
+# Troubleshooting
+
+## Wyze: 429 Too Many Requests
+
+Example:
+
+```text
+requests.exceptions.HTTPError:
+429 Client Error: Too Many Requests
+for url:
+https://auth-prod.api.wyze.com/api/user/login
+```
+
+This means Wyze has rate-limited authentication.
+
+Do not continuously restart the application while this occurs.
+
+Stop the container:
+
+```bash
+docker compose down
+```
+
+Allow the Wyze authentication rate limit to clear before attempting another initial login.
+
+Once:
+
+```text
+wyze_tokens.json
+```
+
+exists, scheduled executions should normally display:
+
+```text
+Using cached Wyze authentication token.
+```
+
+rather than performing another full username/password login.
+
+---
+
+## Garmin Authentication Returns 429
+
+Garmin may return messages similar to:
+
+```text
+mobile+cffi returned 429
+```
+
+or:
+
+```text
+mobile+requests returned 429
+```
+
+Garmin can rate-limit authentication based on more than just the source IP address.
+
+The application can skip known-problematic mobile authentication strategies and use alternative Garmin authentication methods.
+
+Do not repeatedly restart the initial authentication process if all available authentication methods are returning 429 responses.
+
+Once:
+
+```text
+garmin_tokens.json
+```
+
+has been successfully created, normal synchronization should not require the initial Garmin login process again.
+
+---
+
+## Garmin Token Missing
+
+If the normal container reports that interactive Garmin authentication is required:
+
+```bash
+docker compose down
+```
+
+Then run:
+
+```bash
+docker compose run --rm wyzegarminconnect
+```
+
+Complete Garmin authentication and MFA.
+
+Verify:
+
+```bash
+ls -l tokens/garmin_tokens.json
+```
+
+Then restart the service:
+
+```bash
+docker compose up -d
+```
+
+---
+
+# Upgrading From the Old Garth Version
+
+Previous releases used **Garth** for Garmin authentication.
+
+Old token directories may contain files such as:
+
+```text
+oauth1_token.json
+oauth2_token.json
+```
+
+The current implementation uses:
+
+```text
+garmin_tokens.json
+```
+
+The old Garth tokens cannot be directly used by the new Garmin authentication implementation.
+
+Perform a new interactive authentication:
+
+```bash
+docker compose run --rm wyzegarminconnect
+```
+
+Complete Garmin authentication and MFA.
+
+Verify that:
+
+```text
+tokens/garmin_tokens.json
+```
+
+has been created and that the Garmin upload succeeds.
+
+The obsolete Garth files can then be removed.
+
+---
+
+# Wyze SDK Warning
+
+You may see:
+
+```text
+SyntaxWarning: invalid escape sequence '\d'
+```
+
+coming from:
+
+```text
+wyze_sdk/api/devices/locks.py
+```
+
+This warning originates inside the Wyze SDK and does not prevent Wyze Scale synchronization.
+
+---
+
+# Token Security
+
+The token files provide authenticated access to your Wyze and Garmin accounts.
+
+Do not commit them to Git.
+
+Recommended permissions:
+
+```bash
+chmod 700 tokens
+chmod 600 tokens/*.json
+```
+
+Add the following to `.gitignore`:
+
+```gitignore
+tokens/
+*.fit
+cksum.txt
+```
+
+You should also avoid committing a `docker-compose.yml` containing real usernames, passwords or API keys.
+
+---
+
+# Repository Layout
+
+The Docker implementation is located in:
+
+```text
+Docker files/
+```
+
+Important files include:
+
+```text
+Docker files/
+├── Dockerfile
+├── entrypoint.sh
+├── fit.py
+└── scale.py
+```
+
+The repository root contains:
+
+```text
+docker-compose.yml
+README.md
+```
+
+The Docker image uses the Python source files from the `Docker files` directory.
+
+---
+
+# Scheduling
+
+The Docker container runs the synchronization script when the container starts.
+
+It then runs automatically every 10 minutes using cron:
+
+```cron
+*/10 * * * * /wyze_garmin_sync/scale.py
+```
+
+A separate cron configuration on the Docker host is not required.
+
+---
+
+# Building the Docker Image
+
+Clone the repository:
+
+```bash
+git clone https://github.com/svanhoutte/wyze_garmin_sync.git
+
+cd wyze_garmin_sync/"Docker files"
+```
+
+Build locally:
+
+```bash
+docker build \
+  -t svanhoutte/wyzegarminconnect:latest \
+  .
+```
+
+Or build and push using Buildx:
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  -t svanhoutte/wyzegarminconnect:latest \
+  --push \
+  .
+```
+
+Adjust the target platform as needed for your environment.
+
+---
+
+# Manual Installation
+
+Docker is the recommended installation method.
+
+For a manual Python installation, the primary dependencies include:
+
+```bash
+pip install wyze_sdk garminconnect
+```
+
+You must provide the same environment variables and persistent token locations used by the Docker container.
+
+For Garmin accounts using MFA, the initial execution must be performed from an interactive terminal.
+
 
 #### [](https://github.com/svanhoutte/wyze_garmin_sync#run-the-script)Run the script
 
@@ -141,6 +791,24 @@ This should be done at least once before setting up the cron as if you have 2FA 
 Will run the script every 10 min to get if a new measurement has been made on the scale.
 
     */10 * * * * path_to_script/scale.py 2>&1 | /usr/bin/logger -t garminsync
+---
+
+# Credits
+
+This project relies on open-source projects including:
+
+- Wyze SDK
+- python-garminconnect
+
+---
+
+# Disclaimer
+
+This project uses unofficial interfaces for Wyze and Garmin Connect.
+
+Changes made by Wyze or Garmin to their APIs or authentication mechanisms may temporarily break synchronization.
+
+This project is not affiliated with Wyze Labs or Garmin.
 
 ***
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/sebastienv)
