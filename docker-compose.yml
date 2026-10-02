@@ -2,8 +2,8 @@ version: "3.9"
 services:
   wyzegarminconnect:
     image: svanhoutte/wyzegarminconnect:latest
-    stdin_open: true # docker run -i
-    tty: true        # docker run -t
+#    stdin_open: true # docker run -i
+#    tty: true        # docker run -t
     restart: unless-stopped
     network_mode: "host"
     environment:
@@ -14,6 +14,7 @@ services:
       WYZE_API_KEY: "api_key"
       Garmin_username: "garmin username"
       Garmin_password: "garmin password"
+      token: "path to token"
     volumes:
       - "/etc/timezone:/etc/timezone:ro"
       - "/etc/localtime:/etc/localtime:ro"
