@@ -11,15 +11,33 @@ from wyze_sdk.errors import WyzeApiError
 
 from fit import FitEncoder_Weight
 
-import garth
-from getpass import getpass
+from datetime import datetime, timezone
+
+from garminconnect import (
+    Garmin,
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
 WYZE_EMAIL = os.environ.get('WYZE_EMAIL')
 WYZE_PASSWORD = os.environ.get('WYZE_PASSWORD')
 WYZE_KEY_ID = os.environ.get('WYZE_KEY_ID')
 WYZE_API_KEY = os.environ.get('WYZE_API_KEY')
-GARMIN_USERNAME = os.environ.get('Garmin_username')
-GARMIN_PASSWORD = os.environ.get('Garmin_password')
+GARMIN_USERNAME = (
+    os.environ.get("GARMIN_EMAIL")
+    or os.environ.get("Garmin_username")
+)
+
+GARMIN_PASSWORD = (
+    os.environ.get("GARMIN_PASSWORD")
+    or os.environ.get("Garmin_password")
+)
+
+GARMIN_TOKEN_DIR = (
+    os.environ.get("GARMINTOKENS")
+    or "/wyze_garmin_sync/tokens"
+)
 WYZE_TOKEN_FILE = (
     os.environ.get("token")
     or "/wyze_garmin_sync/tokens/wyze_tokens.json"
@@ -169,32 +187,166 @@ def refresh_wyze_token(client, tokens):
         print(f"Unable to refresh Wyze authentication token: {e}")
         return False
 
-def upload_to_garmin(file_path):
-    try:
-        garth.resume('/wyze_garmin_sync/tokens')
-        garth.client.username
-    except:
-        try:
-            garth.login(GARMIN_USERNAME, GARMIN_PASSWORD)
-            garth.save('/wyze_garmin_sync/tokens')
-        except:
-            email = input("Enter Garmin email address: ")
-            password = getpass("Enter Garmin password: ")
-            try:
-                garth.login(email, password)
-                garth.save('/wyze_garmin_sync/tokens')
-            except Exception as exc:
-                print(repr(exc))
-                exit()
+def login_to_garmin():
+    """
+    Authenticate with Garmin Connect.
+
+    garminconnect will:
+    1. Load garmin_tokens.json if it exists.
+    2. Refresh the token automatically when necessary.
+    3. Only perform a credential login if stored tokens are unavailable
+       or invalid.
+    """
 
     try:
-        with open(file_path, "rb") as f:
-            garth.client.upload(f)
-        return True
+        os.makedirs(GARMIN_TOKEN_DIR, exist_ok=True)
+
+        garmin = Garmin(
+            email=GARMIN_USERNAME,
+            password=GARMIN_PASSWORD
+        )
+
+        garmin.login(GARMIN_TOKEN_DIR)
+
+        print("Garmin authentication successful.")
+        return garmin
+
+    except GarminConnectTooManyRequestsError as e:
+        print(f"Garmin rate limit reached: {e}")
+
+    except GarminConnectAuthenticationError as e:
+        print(f"Garmin authentication failed: {e}")
+
+    except GarminConnectConnectionError as e:
+        print(f"Garmin connection error: {e}")
+
     except Exception as e:
-        print(f"Garmin upload error: {e}")
+        print(f"Unexpected Garmin error: {e}")
+
+    return None
+
+
+def upload_to_garmin(scale):
+    """
+    Upload the latest Wyze scale measurement to Garmin Connect.
+    """
+
+    garmin = login_to_garmin()
+
+    if garmin is None:
         return False
 
+    try:
+        record = scale.latest_records[0]
+
+        #
+        # Wyze timestamp is milliseconds since Unix epoch.
+        # Convert to a timezone-aware ISO timestamp.
+        #
+        measurement_time = datetime.fromtimestamp(
+            record.measure_ts / 1000,
+            tz=timezone.utc
+        ).astimezone()
+
+        timestamp = measurement_time.isoformat()
+
+        #
+        # Wyze reports weight in pounds.
+        # Garmin expects kilograms.
+        #
+        weight_kg = record.weight * 0.45359237
+
+        #
+        # Calculate active metabolism the same way as your
+        # existing FIT generation.
+        #
+        active_met = None
+
+        if record.bmr is not None:
+            active_met = int(float(record.bmr) * 1.25)
+
+        print(
+            f"Uploading body composition to Garmin: "
+            f"{weight_kg:.2f} kg at {timestamp}"
+        )
+
+        response = garmin.add_body_composition(
+            timestamp=timestamp,
+            weight=weight_kg,
+
+            percent_fat=(
+                float(record.body_fat)
+                if record.body_fat is not None
+                else None
+            ),
+
+            percent_hydration=(
+                float(record.body_water)
+                if record.body_water is not None
+                else None
+            ),
+
+            bone_mass=(
+                float(record.bone_mineral)
+                if record.bone_mineral is not None
+                else None
+            ),
+
+            muscle_mass=(
+                float(record.muscle)
+                if record.muscle is not None
+                else None
+            ),
+
+            basal_met=(
+                float(record.bmr)
+                if record.bmr is not None
+                else None
+            ),
+
+            active_met=active_met,
+
+            physique_rating=(
+                float(record.body_type or 5)
+            ),
+
+            metabolic_age=(
+                float(record.metabolic_age)
+                if record.metabolic_age is not None
+                else None
+            ),
+
+            visceral_fat_rating=(
+                float(record.body_vfr)
+                if record.body_vfr is not None
+                else None
+            ),
+
+            bmi=(
+                float(record.bmi)
+                if record.bmi is not None
+                else None
+            ),
+        )
+
+        print("Garmin body composition upload successful.")
+
+        return True
+
+    except GarminConnectTooManyRequestsError as e:
+        print(f"Garmin rate limit reached during upload: {e}")
+
+    except GarminConnectAuthenticationError as e:
+        print(f"Garmin authentication failed during upload: {e}")
+
+    except GarminConnectConnectionError as e:
+        print(f"Garmin upload failed: {e}")
+
+    except Exception as e:
+        print(f"Unexpected Garmin upload error: {e}")
+
+    return False
+    
 def generate_fit_file(scale):
     fit = FitEncoder_Weight()
     timestamp = math.trunc(scale.latest_records[0].measure_ts / 1000)
@@ -203,7 +355,7 @@ def generate_fit_file(scale):
     data_keys = {
         'percent_fat': scale.latest_records[0].body_fat,
         'percent_hydration': scale.latest_records[0].body_water,
-        'visceral_fat_mass': scale.latest_records[0].body_vfr,
+        'visceral_fat_mass': scale.latest_records[0].body_fat,
         'bone_mass': scale.latest_records[0].bone_mineral,
         'muscle_mass': scale.latest_records[0].muscle,
         'basal_met': scale.latest_records[0].bmr,
@@ -312,7 +464,7 @@ def main():
                     else:
                         print("New measurement detected. Uploading file...")
                         # Upload the fit file to Garmin
-                        if upload_to_garmin(fitfile_path):
+                        if upload_to_garmin(scale):
                             print("File uploaded successfully.")
                             # Update cksum.txt with the new checksum
                             with open(cksum_file_path, "w") as cksum_file:
