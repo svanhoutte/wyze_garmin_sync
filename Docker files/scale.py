@@ -21,7 +21,7 @@ WYZE_API_KEY = os.environ.get('WYZE_API_KEY')
 GARMIN_USERNAME = os.environ.get('Garmin_username')
 GARMIN_PASSWORD = os.environ.get('Garmin_password')
 WYZE_TOKEN_FILE = (
-    os.environ.get("WYZE_TOKEN_FILE")
+    os.environ.get("token")
     or "/wyze_garmin_sync/tokens/wyze_tokens.json"
 )
 
