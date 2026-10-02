@@ -20,6 +20,11 @@ from garminconnect import (
     GarminConnectTooManyRequestsError,
 )
 
+import sys
+
+from getpass import getpass
+from pathlib import Path
+
 WYZE_EMAIL = os.environ.get('WYZE_EMAIL')
 WYZE_PASSWORD = os.environ.get('WYZE_PASSWORD')
 WYZE_KEY_ID = os.environ.get('WYZE_KEY_ID')
@@ -189,39 +194,199 @@ def refresh_wyze_token(client, tokens):
 
 def login_to_garmin():
     """
-    Authenticate with Garmin Connect.
+    Garmin authentication flow:
 
-    garminconnect will:
-    1. Load garmin_tokens.json if it exists.
-    2. Refresh the token automatically when necessary.
-    3. Only perform a credential login if stored tokens are unavailable
-       or invalid.
+    1. Try existing garmin_tokens.json.
+    2. If valid, use it without credentials/MFA.
+    3. If tokens are missing/invalid:
+       - Interactive terminal -> login with credentials + MFA and save tokens.
+       - Non-interactive/cron -> do NOT attempt credential login.
     """
 
-    try:
-        os.makedirs(GARMIN_TOKEN_DIR, exist_ok=True)
+    Path(GARMIN_TOKEN_DIR).mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
-        garmin = Garmin(
-            email=GARMIN_USERNAME,
-            password=GARMIN_PASSWORD
+    token_file = os.path.join(
+        GARMIN_TOKEN_DIR,
+        "garmin_tokens.json"
+    )
+
+    #
+    # STEP 1 - Try existing token first
+    #
+    if os.path.isfile(token_file):
+
+        print("Garmin token found. Trying cached authentication...")
+
+        try:
+            garmin = Garmin()
+
+            garmin.login(GARMIN_TOKEN_DIR)
+
+            print("Using cached Garmin authentication token.")
+
+            return garmin
+
+        except GarminConnectTooManyRequestsError as e:
+            print(
+                f"Garmin rate limit while using cached token: {e}"
+            )
+
+            # Don't fall back to username/password because of a 429.
+            return None
+
+        except (
+            GarminConnectAuthenticationError,
+            GarminConnectConnectionError
+        ) as e:
+
+            print(
+                f"Cached Garmin authentication failed: {e}"
+            )
+
+            print(
+                "Stored Garmin token may be invalid or expired."
+            )
+
+            # Continue below only if interactive.
+
+        except Exception as e:
+            print(
+                f"Unexpected error loading Garmin token: {e}"
+            )
+
+            return None
+
+    else:
+        print(
+            f"No Garmin token found at {token_file}"
         )
 
-        garmin.login(GARMIN_TOKEN_DIR)
+    #
+    # STEP 2 - Determine whether interactive authentication
+    # is possible.
+    #
+    if not sys.stdin.isatty():
 
-        print("Garmin authentication successful.")
+        print(
+            "Garmin authentication requires an interactive login."
+        )
+
+        print(
+            "Run:"
+        )
+
+        print(
+            "  docker compose run --rm wyzegarminconnect"
+        )
+
+        print(
+            "to authenticate and create garmin_tokens.json."
+        )
+
+        return None
+
+    #
+    # STEP 3 - Interactive credential login
+    #
+    print()
+    print("Starting interactive Garmin authentication.")
+    print()
+
+    email = GARMIN_USERNAME
+
+    if not email:
+        email = input(
+            "Garmin email: "
+        ).strip()
+
+    password = GARMIN_PASSWORD
+
+    if not password:
+        password = getpass(
+            "Garmin password: "
+        )
+
+    if not email or not password:
+        print(
+            "Garmin username/password were not supplied."
+        )
+
+        return None
+
+    try:
+
+        garmin = Garmin(
+            email=email,
+            password=password,
+            prompt_mfa=lambda: input(
+                "Enter Garmin MFA code: "
+            ).strip(),
+        )
+
+        #
+        # Your environment is already getting HTTP 429 from
+        # both mobile login strategies.
+        #
+        # Skip those and go directly to Garmin's web/widget
+        # authentication strategies.
+        #
+        garmin.client.skip_strategies.update({
+            "mobile+cffi",
+            "mobile+requests",
+        })
+
+        print(
+            "Authenticating with Garmin Connect..."
+        )
+
+        garmin.login(
+            GARMIN_TOKEN_DIR
+        )
+
+        print()
+        print(
+            "Garmin authentication successful."
+        )
+
+        print(
+            f"Garmin token saved to {token_file}"
+        )
+
         return garmin
 
     except GarminConnectTooManyRequestsError as e:
-        print(f"Garmin rate limit reached: {e}")
+
+        print(
+            f"Garmin authentication rate limited: {e}"
+        )
 
     except GarminConnectAuthenticationError as e:
-        print(f"Garmin authentication failed: {e}")
+
+        print(
+            f"Garmin authentication failed: {e}"
+        )
 
     except GarminConnectConnectionError as e:
-        print(f"Garmin connection error: {e}")
+
+        print(
+            f"Garmin connection error: {e}"
+        )
+
+    except KeyboardInterrupt:
+
+        print()
+        print(
+            "Garmin authentication cancelled."
+        )
 
     except Exception as e:
-        print(f"Unexpected Garmin error: {e}")
+
+        print(
+            f"Unexpected Garmin authentication error: {e}"
+        )
 
     return None
 
@@ -474,7 +639,7 @@ def main():
                 else:
                     print("No chksum detected. Uploading fit file and creating chksum...")
                     # Upload the fit file to Garmin
-                    if upload_to_garmin(fitfile_path):
+                    if upload_to_garmin(scale):
                         print("File uploaded successfully.")
                         # Create cksum.txt and write the checksum
                         with open(cksum_file_path, "w") as cksum_file:
