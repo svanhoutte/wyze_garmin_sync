@@ -244,56 +244,303 @@ def login_to_wyze():
 
 
 def refresh_wyze_token(client, tokens):
-    """Refresh the Wyze access token without username/password login."""
+    """
+    Attempt to refresh the Wyze access token.
+
+    Returns:
+        "success" - refresh succeeded
+        "invalid" - refresh token itself is invalid/expired
+        "failed"  - temporary or unexpected failure
+    """
+
     if not tokens:
         print("No cached Wyze token information available.")
-        return False
+        return "invalid"
 
-    if not tokens.get("refresh_token"):
+    refresh_token = tokens.get("refresh_token")
+
+    if not refresh_token:
         print("No Wyze refresh token available.")
-        return False
+        return "invalid"
 
     try:
         print("Refreshing Wyze authentication token...")
+
         response = client.refresh_token()
 
         refreshed = response["data"]
 
-        tokens["access_token"] = refreshed["access_token"]
-        tokens["refresh_token"] = refreshed["refresh_token"]
+        new_access_token = refreshed.get("access_token")
+        new_refresh_token = refreshed.get("refresh_token")
+
+        if not new_access_token or not new_refresh_token:
+            print(
+                "Wyze refresh response did not contain "
+                "both access and refresh tokens."
+            )
+            return "failed"
+
+        #
+        # Wyze rotates BOTH tokens.
+        #
+        tokens["access_token"] = new_access_token
+        tokens["refresh_token"] = new_refresh_token
 
         save_wyze_tokens(tokens)
 
-        print("Wyze authentication token refreshed.")
-        return True
+        print("Wyze authentication token refreshed successfully.")
+
+        return "success"
 
     except Exception as exc:
+        error = str(exc)
+        error_lower = error.lower()
+
         print(f"Unable to refresh Wyze authentication token: {exc}")
-        return False
+
+        #
+        # Wyze API error 2002:
+        #
+        #     refresh token is error
+        #
+        # This means retrying the same refresh token is pointless.
+        #
+        if (
+            "'code': '2002'" in error
+            or '"code": "2002"' in error
+            or "refresh token is error" in error_lower
+        ):
+            print(
+                "Wyze refresh token is no longer valid. "
+                "A fresh Wyze login is required."
+            )
+            return "invalid"
+
+        #
+        # Do not turn network/server errors into repeated
+        # username/password login attempts.
+        #
+        return "failed"
+
+
+def reauthenticate_wyze():
+    """
+    Perform one fresh Wyze credential login.
+
+    Used only when Wyze explicitly reports that the stored
+    refresh token is invalid.
+    """
+
+    print("Performing fresh Wyze authentication...")
+
+    try:
+        client = Client()
+
+        response = client.login(
+            email=WYZE_EMAIL,
+            password=WYZE_PASSWORD,
+            key_id=WYZE_KEY_ID,
+            api_key=WYZE_API_KEY,
+        )
+
+        access_token = response.get("access_token")
+        refresh_token = response.get("refresh_token")
+        user_id = response.get("user_id")
+
+        if not access_token or not refresh_token:
+            print(
+                "Wyze login succeeded but did not return "
+                "the expected authentication tokens."
+            )
+            return None, None
+
+        tokens = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "user_id": user_id,
+        }
+
+        save_wyze_tokens(tokens)
+
+        print("Wyze re-authentication successful.")
+        print("New Wyze authentication tokens saved.")
+
+        return client, tokens
+
+    except HTTPError as exc:
+        status = (
+            exc.response.status_code
+            if exc.response is not None
+            else None
+        )
+
+        if status == 429:
+            print(
+                "Wyze authentication rate limited (HTTP 429). "
+                "No additional login attempt will be made "
+                "during this run."
+            )
+        else:
+            print(f"Wyze HTTP authentication error: {exc}")
+
+    except WyzeApiError as exc:
+        print(f"Wyze API authentication error: {exc}")
+
+    except RequestException as exc:
+        print(f"Wyze network error: {exc}")
+
+    except Exception as exc:
+        print(f"Unexpected Wyze authentication error: {exc}")
+
+    return None, None
+
 
 
 def get_wyze_devices(client, tokens):
-    """Get the Wyze device list, refreshing the access token once if needed."""
+    """
+    Retrieve Wyze devices while handling authentication recovery.
+
+    Flow:
+
+        cached access token
+              |
+              v
+        devices_list()
+          |        |
+        works    expired
+          |        |
+          |        v
+          |    refresh token
+          |      |      |
+          |    works   invalid
+          |      |      |
+          |      |      v
+          |      |   fresh login
+          |      |      |
+          +------+------+
+                 |
+                 v
+             devices
+    """
+
+    #
+    # ---------------------------------------------------------
+    # First attempt using cached access token
+    # ---------------------------------------------------------
+    #
     try:
         return client.devices_list()
 
     except Exception as exc:
         print(f"Cached Wyze token failed: {exc}")
 
-    if not refresh_wyze_token(client, tokens):
-        print(
-            "Wyze session could not be refreshed. "
-            "Stopping this run to avoid repeated login attempts."
-        )
-        return None
+    #
+    # ---------------------------------------------------------
+    # Access token failed. Try refresh token.
+    # ---------------------------------------------------------
+    #
+    refresh_status = refresh_wyze_token(
+        client,
+        tokens,
+    )
 
-    try:
-        return client.devices_list()
+    #
+    # ---------------------------------------------------------
+    # Refresh succeeded
+    # ---------------------------------------------------------
+    #
+    if refresh_status == "success":
 
-    except Exception as exc:
-        print(f"Wyze API still unavailable after token refresh: {exc}")
-        return None
+        try:
+            return client.devices_list()
 
+        except Exception as exc:
+            print(
+                "Wyze API still unavailable after token refresh: "
+                f"{exc}"
+            )
+            return None
+
+    #
+    # ---------------------------------------------------------
+    # Refresh token itself is invalid.
+    #
+    # Perform exactly ONE credential login.
+    # ---------------------------------------------------------
+    #
+    if refresh_status == "invalid":
+
+        new_client, new_tokens = reauthenticate_wyze()
+
+        if new_client is None:
+            print(
+                "Unable to re-authenticate with Wyze. "
+                "Stopping this run."
+            )
+            return None
+
+        #
+        # IMPORTANT:
+        #
+        # main() still holds the original client object.
+        #
+        # We need the remainder of the application to use the
+        # newly authenticated client.
+        #
+        # Instead of returning only devices, copy the newly
+        # authenticated session into the existing client object.
+        #
+        try:
+            client._access_token = new_client._access_token
+            client._refresh_token = new_client._refresh_token
+            client._user_id = new_client._user_id
+
+        except Exception:
+            #
+            # If SDK internals differ, fall back to updating
+            # whatever attributes are available.
+            #
+            if hasattr(new_client, "_access_token"):
+                client._access_token = new_client._access_token
+
+            if hasattr(new_client, "_refresh_token"):
+                client._refresh_token = new_client._refresh_token
+
+            if hasattr(new_client, "_user_id"):
+                client._user_id = new_client._user_id
+
+        #
+        # Update the dictionary passed from main() as well.
+        #
+        if tokens is not None and new_tokens is not None:
+            tokens.clear()
+            tokens.update(new_tokens)
+
+        try:
+            return client.devices_list()
+
+        except Exception as exc:
+            print(
+                "Wyze API unavailable after re-authentication: "
+                f"{exc}"
+            )
+            return None
+
+    #
+    # ---------------------------------------------------------
+    # Refresh failed for a reason OTHER than an invalid token.
+    #
+    # This may be a network problem, server error, etc.
+    # Do not perform credential authentication in this case.
+    # ---------------------------------------------------------
+    #
+    print(
+        "Wyze token refresh failed for a temporary or "
+        "unexpected reason. Stopping this run without "
+        "performing another login."
+    )
+
+    return None
 
 # -----------------------------------------------------------------------------
 # Garmin authentication
