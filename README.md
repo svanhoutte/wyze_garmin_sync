@@ -507,6 +507,239 @@ will continue to be used.
 
 ---
 
+## Historical Backfill
+
+Historical Wyze Scale measurements can be uploaded to Garmin Connect using the `-timewindow` option.
+
+This is useful when:
+
+- Migrating existing Wyze Scale history to Garmin
+- Recovering measurements that were not previously synchronized
+- Re-uploading measurements from a specific date range
+
+### Usage
+
+Using Docker Compose:
+
+```bash
+docker compose run --rm wyzegarminconnect \
+  -timewindow "2026-01-01" "2026-09-30"
+```
+
+You can also specify a time:
+
+```bash
+docker compose run --rm wyzegarminconnect \
+  -timewindow "2026-01-01 08:00" "2026-01-31 18:00"
+```
+
+Supported formats include:
+
+```text
+YYYY-MM-DD
+YYYY-MM-DD HH:MM
+YYYY-MM-DD HH:MM:SS
+YYYY-MM-DDTHH:MM
+YYYY-MM-DDTHH:MM:SS
+```
+
+When only a date is supplied, the start date begins at `00:00:00` and the end date includes the entire day through `23:59:59`.
+
+For example:
+
+```bash
+docker compose run --rm wyzegarminconnect \
+  -timewindow "2026-09-01" "2026-09-30"
+```
+
+collects all available Wyze measurements from September 1 through September 30, inclusive.
+
+### How Backfill Works
+
+Backfill mode:
+
+1. Authenticates to Wyze using the existing cached token.
+2. Retrieves historical scale measurements.
+3. Filters measurements to the requested date range.
+4. Removes duplicate Wyze records returned during the same run.
+5. Sorts measurements from oldest to newest.
+6. Authenticates to Garmin once.
+7. Uploads each body-composition measurement to Garmin Connect.
+8. Prints a summary when complete.
+
+Example output:
+
+```text
+========================================================================
+Wyze -> Garmin historical synchronization
+========================================================================
+Start: 2026-09-01T00:00:00-04:00
+End:   2026-09-30T23:59:59.999999-04:00
+
+Found 12 measurement(s) in requested time window.
+
+[1/12] 2026-09-02 07:42:18 - 248.2 lb
+Uploading: 2026-09-02 07:42:18 - 248.2 lb / 112.58 kg
+  -> Garmin upload successful.
+
+[2/12] 2026-09-05 08:11:03 - 247.4 lb
+Uploading: 2026-09-05 08:11:03 - 247.4 lb / 112.22 kg
+  -> Garmin upload successful.
+
+...
+
+========================================================================
+Historical synchronization complete
+========================================================================
+Measurements found:    12
+Successfully uploaded: 12
+Failed:                0
+========================================================================
+```
+
+### Backfill Upload Delay
+
+A delay can be added between historical Garmin uploads to reduce the risk of Garmin API rate limiting.
+
+Add the following environment variable to `docker-compose.yml`:
+
+```yaml
+BACKFILL_DELAY_SECONDS: "1.0"
+```
+
+Example:
+
+```yaml
+environment:
+
+  # Wyze
+  WYZE_EMAIL: "your-wyze-email"
+  WYZE_PASSWORD: "your-wyze-password"
+  WYZE_KEY_ID: "your-wyze-key-id"
+  WYZE_API_KEY: "your-wyze-api-key"
+
+  WYZE_TOKEN_FILE: "/wyze_garmin_sync/tokens/wyze_tokens.json"
+
+  # Garmin
+  Garmin_username: "your-garmin-email"
+  Garmin_password: "your-garmin-password"
+
+  GARMINTOKENS: "/wyze_garmin_sync/tokens"
+
+  # Delay between Garmin uploads during historical backfill
+  BACKFILL_DELAY_SECONDS: "1.0"
+```
+
+Increase the value if Garmin starts rate limiting a large backfill:
+
+```yaml
+BACKFILL_DELAY_SECONDS: "2.0"
+```
+
+### Backfill and Cron
+
+Backfill is a **one-time operation**.
+
+When arguments are supplied:
+
+```bash
+docker compose run --rm wyzegarminconnect \
+  -timewindow "2026-01-01" "2026-09-30"
+```
+
+the container:
+
+```text
+starts
+  │
+  ▼
+runs scale.py -timewindow ...
+  │
+  ▼
+uploads historical measurements
+  │
+  ▼
+exits
+```
+
+The normal 10-minute cron scheduler is **not started in backfill mode**.
+
+Normal scheduled synchronization continues to be started with:
+
+```bash
+docker compose up -d
+```
+
+and runs:
+
+```cron
+*/10 * * * *
+```
+
+Backfill therefore does not interfere with the normal scheduled synchronization.
+
+### Duplicate Warning
+
+`-timewindow` is intended as an explicit historical backfill operation.
+
+The application removes duplicate Wyze records returned during the same backfill run, but it does **not currently query Garmin Connect to determine whether a historical measurement was already uploaded during a previous run**.
+
+Running the same time window multiple times may therefore create duplicate measurements in Garmin Connect.
+
+For example, avoid running this twice unless you intentionally want to re-upload the data:
+
+```bash
+docker compose run --rm wyzegarminconnect \
+  -timewindow "2026-01-01" "2026-09-30"
+```
+
+---
+
+### Environment Variables
+
+Add the following entry to the existing environment-variable table:
+
+| Variable | Required | Description |
+|---|---|---|
+| `BACKFILL_DELAY_SECONDS` | No | Delay in seconds between Garmin uploads during historical backfill. Default: `1.0` |
+
+---
+
+### Command Summary
+
+Normal scheduled synchronization:
+
+```bash
+docker compose up -d
+```
+
+View logs:
+
+```bash
+docker compose logs -f
+```
+
+Initial Garmin authentication / MFA:
+
+```bash
+docker compose run --rm wyzegarminconnect
+```
+
+Historical backfill:
+
+```bash
+docker compose run --rm wyzegarminconnect \
+  -timewindow "START_DATE" "END_DATE"
+```
+
+Example:
+
+```bash
+docker compose run --rm wyzegarminconnect \
+  -timewindow "2026-01-01" "2026-09-30"
+```
+
+
 # Troubleshooting
 
 ## Wyze: 429 Too Many Requests
