@@ -7,16 +7,13 @@ import math
 import os
 import sys
 import time as time_module
-from datetime import datetime, time as datetime_time, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from getpass import getpass
 from pathlib import Path
 
 from requests.exceptions import HTTPError, RequestException
-
 from wyze_sdk import Client
 from wyze_sdk.errors import WyzeApiError
-
-from fit import FitEncoder_Weight
 
 from garminconnect import (
     Garmin,
@@ -51,7 +48,7 @@ GARMIN_TOKEN_DIR = (
 )
 
 # Prefer the descriptive variable name, but keep "token" for backward
-# compatibility with existing docker-compose files.
+# compatibility with older docker-compose files.
 WYZE_TOKEN_FILE = (
     os.environ.get("WYZE_TOKEN_FILE")
     or os.environ.get("token")
@@ -67,8 +64,18 @@ except ValueError:
     BACKFILL_DELAY_SECONDS = 1.0
 
 WORK_DIR = "/wyze_garmin_sync"
-FIT_FILE_PATH = os.path.join(WORK_DIR, "wyze_scale.fit")
-CHECKSUM_FILE_PATH = os.path.join(WORK_DIR, "cksum.txt")
+
+# Store the new record checksum in the persistent token directory by default.
+# CHECKSUM_FILE can override this if desired.
+CHECKSUM_FILE_PATH = (
+    os.environ.get("CHECKSUM_FILE")
+    or os.path.join(GARMIN_TOKEN_DIR, "cksum.txt")
+)
+
+# Old versions stored an MD5 of wyze_scale.fit here. We only read this as a
+# fallback during migration. Because the checksum algorithm changed, an old
+# 32-character MD5 will naturally differ once and then be replaced by SHA-256.
+LEGACY_CHECKSUM_FILE_PATH = os.path.join(WORK_DIR, "cksum.txt")
 
 
 # -----------------------------------------------------------------------------
@@ -132,7 +139,7 @@ def parse_date_value(value, *, is_end=False):
         ) from exc
 
     # For a naive datetime, astimezone() interprets it in the system/container
-    # local timezone, including the correct DST offset for that date.
+    # local timezone, including DST for that date.
     if parsed.tzinfo is None:
         parsed = parsed.astimezone()
 
@@ -144,22 +151,23 @@ def parse_date_value(value, *, is_end=False):
 # -----------------------------------------------------------------------------
 
 def save_wyze_tokens(tokens):
-    """Save Wyze authentication information to persistent storage."""
-    os.makedirs(os.path.dirname(WYZE_TOKEN_FILE), exist_ok=True)
+    """Atomically save Wyze authentication information."""
+    token_path = os.path.abspath(os.path.expanduser(WYZE_TOKEN_FILE))
+    os.makedirs(os.path.dirname(token_path), exist_ok=True)
 
-    tmp_file = WYZE_TOKEN_FILE + ".tmp"
+    tmp_file = token_path + ".tmp"
 
-    with open(tmp_file, "w") as token_file:
+    with open(tmp_file, "w", encoding="utf-8") as token_file:
         json.dump(tokens, token_file)
 
     os.chmod(tmp_file, 0o600)
-    os.replace(tmp_file, WYZE_TOKEN_FILE)
+    os.replace(tmp_file, token_path)
 
 
 def load_wyze_tokens():
     """Load cached Wyze authentication information."""
     try:
-        with open(WYZE_TOKEN_FILE, "r") as token_file:
+        with open(WYZE_TOKEN_FILE, "r", encoding="utf-8") as token_file:
             tokens = json.load(token_file)
 
         if not tokens.get("access_token"):
@@ -171,12 +179,86 @@ def load_wyze_tokens():
         return None
 
 
+def credential_login_to_wyze(*, reauthentication=False):
+    """Perform exactly one Wyze username/password/API-key login attempt."""
+    if not all((WYZE_EMAIL, WYZE_PASSWORD, WYZE_KEY_ID, WYZE_API_KEY)):
+        print(
+            "Wyze credentials are incomplete. WYZE_EMAIL, WYZE_PASSWORD, "
+            "WYZE_KEY_ID and WYZE_API_KEY are required for a fresh login."
+        )
+        return None, None
+
+    if reauthentication:
+        print("Performing fresh Wyze authentication...")
+    else:
+        print("Performing initial Wyze authentication...")
+
+    try:
+        client = Client()
+
+        response = client.login(
+            email=WYZE_EMAIL,
+            password=WYZE_PASSWORD,
+            key_id=WYZE_KEY_ID,
+            api_key=WYZE_API_KEY,
+        )
+
+        access_token = response.get("access_token")
+        refresh_token = response.get("refresh_token")
+        user_id = response.get("user_id")
+
+        if not access_token or not refresh_token:
+            print(
+                "Wyze login did not return both an access token and a refresh "
+                "token."
+            )
+            return None, None
+
+        tokens = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "user_id": user_id,
+        }
+
+        save_wyze_tokens(tokens)
+
+        if reauthentication:
+            print("Wyze re-authentication successful.")
+            print("New Wyze authentication tokens saved.")
+        else:
+            print("Wyze authentication successful.")
+            print("Wyze authentication tokens saved.")
+
+        return client, tokens
+
+    except HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+
+        if status == 429:
+            print(
+                "Wyze authentication rate limited (HTTP 429). "
+                "No additional login attempt will be made during this run."
+            )
+        else:
+            print(f"Wyze HTTP authentication error: {exc}")
+
+    except WyzeApiError as exc:
+        print(f"Wyze API authentication error: {exc}")
+
+    except RequestException as exc:
+        print(f"Wyze network error: {exc}")
+
+    except Exception as exc:
+        print(f"Unexpected Wyze authentication error: {exc}")
+
+    return None, None
+
+
 def login_to_wyze():
     """
     Reuse cached Wyze tokens whenever possible.
 
-    Username/password authentication is only performed when no cached token
-    exists.
+    A full credential login is only performed when no cached token exists.
     """
     tokens = load_wyze_tokens()
 
@@ -195,52 +277,17 @@ def login_to_wyze():
         return client, tokens
 
     print("No cached Wyze token found.")
-    print("Performing initial Wyze authentication...")
+    return credential_login_to_wyze(reauthentication=False)
 
-    try:
-        client = Client()
 
-        response = client.login(
-            email=WYZE_EMAIL,
-            password=WYZE_PASSWORD,
-            key_id=WYZE_KEY_ID,
-            api_key=WYZE_API_KEY,
-        )
+def wyze_refresh_token_is_invalid(exc):
+    """Return True when Wyze explicitly rejects the stored refresh token."""
+    text = str(exc).lower()
 
-        tokens = {
-            "access_token": response["access_token"],
-            "refresh_token": response["refresh_token"],
-            "user_id": response["user_id"],
-        }
-
-        save_wyze_tokens(tokens)
-
-        print("Wyze authentication successful.")
-        print("Wyze authentication tokens saved.")
-
-        return client, tokens
-
-    except HTTPError as exc:
-        status = exc.response.status_code if exc.response is not None else None
-
-        if status == 429:
-            print(
-                "Wyze authentication rate limited (HTTP 429). "
-                "Stopping this run without retrying."
-            )
-        else:
-            print(f"Wyze HTTP authentication error: {exc}")
-
-    except WyzeApiError as exc:
-        print(f"Wyze API authentication error: {exc}")
-
-    except RequestException as exc:
-        print(f"Wyze network error: {exc}")
-
-    except Exception as exc:
-        print(f"Unexpected Wyze authentication error: {exc}")
-
-    return None, None
+    return (
+        "refresh token is error" in text
+        or ("2002" in text and "refresh token" in text)
+    )
 
 
 def refresh_wyze_token(client, tokens):
@@ -248,299 +295,98 @@ def refresh_wyze_token(client, tokens):
     Attempt to refresh the Wyze access token.
 
     Returns:
-        "success" - refresh succeeded
-        "invalid" - refresh token itself is invalid/expired
-        "failed"  - temporary or unexpected failure
+      "success" - refresh succeeded and the rotated token pair was saved
+      "invalid" - refresh token itself is unavailable/invalid
+      "failed"  - temporary or unexpected failure; do not credential-login
     """
-
     if not tokens:
         print("No cached Wyze token information available.")
         return "invalid"
 
-    refresh_token = tokens.get("refresh_token")
-
-    if not refresh_token:
+    if not tokens.get("refresh_token"):
         print("No Wyze refresh token available.")
         return "invalid"
 
     try:
         print("Refreshing Wyze authentication token...")
-
         response = client.refresh_token()
-
-        refreshed = response["data"]
+        refreshed = response.get("data", {})
 
         new_access_token = refreshed.get("access_token")
         new_refresh_token = refreshed.get("refresh_token")
 
         if not new_access_token or not new_refresh_token:
             print(
-                "Wyze refresh response did not contain "
-                "both access and refresh tokens."
+                "Wyze refresh response did not contain both a new access token "
+                "and a new refresh token."
             )
             return "failed"
 
-        #
-        # Wyze rotates BOTH tokens.
-        #
+        # Wyze rotates both values during refresh. Save both immediately.
         tokens["access_token"] = new_access_token
         tokens["refresh_token"] = new_refresh_token
-
         save_wyze_tokens(tokens)
 
         print("Wyze authentication token refreshed successfully.")
-
         return "success"
 
     except Exception as exc:
-        error = str(exc)
-        error_lower = error.lower()
-
         print(f"Unable to refresh Wyze authentication token: {exc}")
 
-        #
-        # Wyze API error 2002:
-        #
-        #     refresh token is error
-        #
-        # This means retrying the same refresh token is pointless.
-        #
-        if (
-            "'code': '2002'" in error
-            or '"code": "2002"' in error
-            or "refresh token is error" in error_lower
-        ):
+        if wyze_refresh_token_is_invalid(exc):
             print(
                 "Wyze refresh token is no longer valid. "
                 "A fresh Wyze login is required."
             )
             return "invalid"
 
-        #
-        # Do not turn network/server errors into repeated
-        # username/password login attempts.
-        #
         return "failed"
-
-
-def reauthenticate_wyze():
-    """
-    Perform one fresh Wyze credential login.
-
-    Used only when Wyze explicitly reports that the stored
-    refresh token is invalid.
-    """
-
-    print("Performing fresh Wyze authentication...")
-
-    try:
-        client = Client()
-
-        response = client.login(
-            email=WYZE_EMAIL,
-            password=WYZE_PASSWORD,
-            key_id=WYZE_KEY_ID,
-            api_key=WYZE_API_KEY,
-        )
-
-        access_token = response.get("access_token")
-        refresh_token = response.get("refresh_token")
-        user_id = response.get("user_id")
-
-        if not access_token or not refresh_token:
-            print(
-                "Wyze login succeeded but did not return "
-                "the expected authentication tokens."
-            )
-            return None, None
-
-        tokens = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "user_id": user_id,
-        }
-
-        save_wyze_tokens(tokens)
-
-        print("Wyze re-authentication successful.")
-        print("New Wyze authentication tokens saved.")
-
-        return client, tokens
-
-    except HTTPError as exc:
-        status = (
-            exc.response.status_code
-            if exc.response is not None
-            else None
-        )
-
-        if status == 429:
-            print(
-                "Wyze authentication rate limited (HTTP 429). "
-                "No additional login attempt will be made "
-                "during this run."
-            )
-        else:
-            print(f"Wyze HTTP authentication error: {exc}")
-
-    except WyzeApiError as exc:
-        print(f"Wyze API authentication error: {exc}")
-
-    except RequestException as exc:
-        print(f"Wyze network error: {exc}")
-
-    except Exception as exc:
-        print(f"Unexpected Wyze authentication error: {exc}")
-
-    return None, None
-
 
 
 def get_wyze_devices(client, tokens):
     """
-    Retrieve Wyze devices while handling authentication recovery.
+    Retrieve devices and recover authentication when possible.
 
-    Flow:
-
-        cached access token
-              |
-              v
-        devices_list()
-          |        |
-        works    expired
-          |        |
-          |        v
-          |    refresh token
-          |      |      |
-          |    works   invalid
-          |      |      |
-          |      |      v
-          |      |   fresh login
-          |      |      |
-          +------+------+
-                 |
-                 v
-             devices
+    Returns (client, tokens, devices). Returning the client is important because
+    an invalid refresh token requires a brand-new Client instance.
     """
-
-    #
-    # ---------------------------------------------------------
-    # First attempt using cached access token
-    # ---------------------------------------------------------
-    #
     try:
-        return client.devices_list()
+        return client, tokens, client.devices_list()
 
     except Exception as exc:
         print(f"Cached Wyze token failed: {exc}")
 
-    #
-    # ---------------------------------------------------------
-    # Access token failed. Try refresh token.
-    # ---------------------------------------------------------
-    #
-    refresh_status = refresh_wyze_token(
-        client,
-        tokens,
-    )
+    refresh_status = refresh_wyze_token(client, tokens)
 
-    #
-    # ---------------------------------------------------------
-    # Refresh succeeded
-    # ---------------------------------------------------------
-    #
     if refresh_status == "success":
-
         try:
-            return client.devices_list()
-
+            return client, tokens, client.devices_list()
         except Exception as exc:
-            print(
-                "Wyze API still unavailable after token refresh: "
-                f"{exc}"
-            )
-            return None
+            print(f"Wyze API still unavailable after token refresh: {exc}")
+            return None, None, None
 
-    #
-    # ---------------------------------------------------------
-    # Refresh token itself is invalid.
-    #
-    # Perform exactly ONE credential login.
-    # ---------------------------------------------------------
-    #
     if refresh_status == "invalid":
-
-        new_client, new_tokens = reauthenticate_wyze()
+        new_client, new_tokens = credential_login_to_wyze(
+            reauthentication=True
+        )
 
         if new_client is None:
-            print(
-                "Unable to re-authenticate with Wyze. "
-                "Stopping this run."
-            )
-            return None
-
-        #
-        # IMPORTANT:
-        #
-        # main() still holds the original client object.
-        #
-        # We need the remainder of the application to use the
-        # newly authenticated client.
-        #
-        # Instead of returning only devices, copy the newly
-        # authenticated session into the existing client object.
-        #
-        try:
-            client._access_token = new_client._access_token
-            client._refresh_token = new_client._refresh_token
-            client._user_id = new_client._user_id
-
-        except Exception:
-            #
-            # If SDK internals differ, fall back to updating
-            # whatever attributes are available.
-            #
-            if hasattr(new_client, "_access_token"):
-                client._access_token = new_client._access_token
-
-            if hasattr(new_client, "_refresh_token"):
-                client._refresh_token = new_client._refresh_token
-
-            if hasattr(new_client, "_user_id"):
-                client._user_id = new_client._user_id
-
-        #
-        # Update the dictionary passed from main() as well.
-        #
-        if tokens is not None and new_tokens is not None:
-            tokens.clear()
-            tokens.update(new_tokens)
+            print("Unable to re-authenticate with Wyze. Stopping this run.")
+            return None, None, None
 
         try:
-            return client.devices_list()
-
+            devices = new_client.devices_list()
+            return new_client, new_tokens, devices
         except Exception as exc:
-            print(
-                "Wyze API unavailable after re-authentication: "
-                f"{exc}"
-            )
-            return None
+            print(f"Wyze API unavailable after re-authentication: {exc}")
+            return None, None, None
 
-    #
-    # ---------------------------------------------------------
-    # Refresh failed for a reason OTHER than an invalid token.
-    #
-    # This may be a network problem, server error, etc.
-    # Do not perform credential authentication in this case.
-    # ---------------------------------------------------------
-    #
     print(
-        "Wyze token refresh failed for a temporary or "
-        "unexpected reason. Stopping this run without "
-        "performing another login."
+        "Wyze token refresh failed for a temporary or unexpected reason. "
+        "Stopping this run without performing another credential login."
     )
+    return None, None, None
 
-    return None
 
 # -----------------------------------------------------------------------------
 # Garmin authentication
@@ -553,18 +399,19 @@ def login_to_garmin():
     1. Use garmin_tokens.json if it exists.
     2. If the token is unavailable/invalid and this is an interactive terminal,
        perform credential login and prompt for MFA if required.
-    3. In a non-interactive cron run, never wait for MFA or continuously retry
-       username/password authentication.
+    3. In a non-interactive cron run, never wait for MFA or repeatedly attempt
+       credential authentication.
     """
-    Path(GARMIN_TOKEN_DIR).mkdir(parents=True, exist_ok=True)
-    token_file = Path(GARMIN_TOKEN_DIR) / "garmin_tokens.json"
+    token_dir = Path(GARMIN_TOKEN_DIR).expanduser()
+    token_dir.mkdir(parents=True, exist_ok=True)
+    token_file = token_dir / "garmin_tokens.json"
 
     if token_file.is_file():
         print("Garmin token found. Trying cached authentication...")
 
         try:
             garmin = Garmin()
-            garmin.login(GARMIN_TOKEN_DIR)
+            garmin.login(str(token_dir))
 
             print("Using cached Garmin authentication token.")
             return garmin
@@ -573,7 +420,10 @@ def login_to_garmin():
             print(f"Garmin rate limit while using cached token: {exc}")
             return None
 
-        except (GarminConnectAuthenticationError, GarminConnectConnectionError) as exc:
+        except (
+            GarminConnectAuthenticationError,
+            GarminConnectConnectionError,
+        ) as exc:
             print(f"Cached Garmin authentication failed: {exc}")
             print("Stored Garmin token may be invalid or expired.")
 
@@ -609,19 +459,23 @@ def login_to_garmin():
             prompt_mfa=lambda: input("Enter Garmin MFA code: ").strip(),
         )
 
-        # These two strategies were observed returning 429 in this deployment.
-        # Skip them and use Garmin's widget/portal strategies for initial auth.
-        garmin.client.skip_strategies.update({
-            "mobile+cffi",
-            "mobile+requests",
-        })
+        # These mobile strategies were observed returning 429 for this project.
+        # Skip them during initial credential authentication and use the
+        # widget/portal strategies instead.
+        if (
+            hasattr(garmin, "client")
+            and hasattr(garmin.client, "skip_strategies")
+        ):
+            garmin.client.skip_strategies.update({
+                "mobile+cffi",
+                "mobile+requests",
+            })
 
         print("Authenticating with Garmin Connect...")
-        garmin.login(GARMIN_TOKEN_DIR)
+        garmin.login(str(token_dir))
 
         print("Garmin authentication successful.")
         print(f"Garmin token saved to {token_file}")
-
         return garmin
 
     except GarminConnectTooManyRequestsError as exc:
@@ -644,101 +498,388 @@ def login_to_garmin():
 
 
 # -----------------------------------------------------------------------------
-# Record helpers / Garmin upload
+# Record helpers / checksum
 # -----------------------------------------------------------------------------
+
+def optional_float(value):
+    """Convert a value to a finite float, or return None if unavailable."""
+    if value is None or value == "":
+        return None
+
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(result):
+        return None
+
+    return result
+
+
+def optional_int(value):
+    """Convert an optional numeric value to int, or return None."""
+    result = optional_float(value)
+
+    if result is None:
+        return None
+
+    return int(result)
+
 
 def record_datetime(record):
     """Convert a Wyze millisecond epoch timestamp to local timezone."""
+    measure_ts = optional_float(
+        getattr(record, "measure_ts", None)
+    )
+
+    if measure_ts is None:
+        raise ValueError(
+            "Wyze record does not contain a valid measure_ts."
+        )
+
     return datetime.fromtimestamp(
-        float(record.measure_ts) / 1000,
+        measure_ts / 1000,
         tz=timezone.utc,
     ).astimezone()
 
 
 def record_identity(record):
-    """Build a stable-enough key for deduplicating records returned by Wyze."""
-    data_id = getattr(record, "data_id", None)
+    """Build a stable key for deduplicating records returned by Wyze."""
+    data_id = (
+        getattr(record, "id", None)
+        or getattr(record, "data_id", None)
+    )
 
-    if data_id is not None:
+    if data_id not in (None, "", "None"):
         return ("data_id", str(data_id))
 
-    weight = getattr(record, "weight", None)
-    weight_key = None if weight is None else round(float(weight), 4)
+    measure_ts = optional_float(
+        getattr(record, "measure_ts", None)
+    )
+
+    weight = optional_float(
+        getattr(record, "weight", None)
+    )
 
     return (
         "measurement",
-        int(float(record.measure_ts)),
-        weight_key,
+        None if measure_ts is None else int(measure_ts),
+        None if weight is None else round(weight, 4),
     )
 
 
+def measurement_checksum(record):
+    """
+    Hash the Wyze measurement identity, not a generated FIT file.
+
+    This intentionally uses record ID + timestamp + weight rather than every
+    optional body-composition field. If Wyze later enriches the same reading
+    with an optional field, it should not be mistaken for a new weigh-in.
+    """
+    data_id = (
+        getattr(record, "id", None)
+        or getattr(record, "data_id", None)
+    )
+
+    measure_ts = optional_float(
+        getattr(record, "measure_ts", None)
+    )
+
+    weight = optional_float(
+        getattr(record, "weight", None)
+    )
+
+    payload = {
+        "id": (
+            None
+            if data_id in (None, "", "None")
+            else str(data_id)
+        ),
+        "measure_ts": (
+            None
+            if measure_ts is None
+            else int(measure_ts)
+        ),
+        "weight": (
+            None
+            if weight is None
+            else round(weight, 4)
+        ),
+    }
+
+    serialized = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(
+        serialized.encode("utf-8")
+    ).hexdigest()
+
+
+def load_previous_checksum():
+    """Load the previous successful latest-reading checksum."""
+    paths = [CHECKSUM_FILE_PATH]
+
+    if (
+        os.path.abspath(LEGACY_CHECKSUM_FILE_PATH)
+        != os.path.abspath(CHECKSUM_FILE_PATH)
+    ):
+        paths.append(LEGACY_CHECKSUM_FILE_PATH)
+
+    for path in paths:
+        try:
+            with open(
+                path,
+                "r",
+                encoding="utf-8",
+            ) as checksum_file:
+                value = checksum_file.read().strip()
+
+            if value:
+                if (
+                    path == LEGACY_CHECKSUM_FILE_PATH
+                    and path != CHECKSUM_FILE_PATH
+                ):
+                    print(
+                        "Using legacy checksum file at "
+                        f"{path} for this comparison."
+                    )
+
+                return value
+
+        except FileNotFoundError:
+            continue
+
+        except OSError as exc:
+            print(
+                f"Unable to read checksum file {path}: {exc}"
+            )
+            return None
+
+    return None
+
+
+def save_checksum(checksum):
+    """Atomically save the latest successfully uploaded record checksum."""
+    checksum_path = os.path.abspath(
+        os.path.expanduser(CHECKSUM_FILE_PATH)
+    )
+
+    os.makedirs(
+        os.path.dirname(checksum_path),
+        exist_ok=True,
+    )
+
+    tmp_file = checksum_path + ".tmp"
+
+    with open(
+        tmp_file,
+        "w",
+        encoding="utf-8",
+    ) as checksum_file:
+        checksum_file.write(checksum)
+
+    os.chmod(tmp_file, 0o600)
+    os.replace(tmp_file, checksum_path)
+
+
+# -----------------------------------------------------------------------------
+# Record normalization / Garmin upload
+# -----------------------------------------------------------------------------
+
+def normalize_scale_record(record):
+    """
+    Normalize a Wyze ScaleRecord.
+
+    Weight and timestamp are required.
+    All body-composition values are optional.
+    """
+    weight_lb = optional_float(
+        getattr(record, "weight", None)
+    )
+
+    measure_ts = optional_float(
+        getattr(record, "measure_ts", None)
+    )
+
+    if weight_lb is None:
+        raise ValueError(
+            "Wyze scale record does not contain a valid weight."
+        )
+
+    if measure_ts is None:
+        raise ValueError(
+            "Wyze scale record does not contain a valid timestamp."
+        )
+
+    bmr = optional_float(
+        getattr(record, "bmr", None)
+    )
+
+    return {
+        "measure_ts": int(measure_ts),
+        "weight_lb": weight_lb,
+        "weight_kg": weight_lb * 0.45359237,
+
+        "percent_fat": optional_float(
+            getattr(record, "body_fat", None)
+        ),
+
+        "percent_hydration": optional_float(
+            getattr(record, "body_water", None)
+        ),
+
+        "bone_mass": optional_float(
+            getattr(record, "bone_mineral", None)
+        ),
+
+        "muscle_mass": optional_float(
+            getattr(record, "muscle", None)
+        ),
+
+        "basal_met": bmr,
+
+        "active_met": (
+            int(bmr * 1.25)
+            if bmr is not None
+            else None
+        ),
+
+        # Do not manufacture a physique rating if Wyze
+        # did not supply one.
+        "physique_rating": optional_int(
+            getattr(record, "body_type", None)
+        ),
+
+        "metabolic_age": optional_int(
+            getattr(record, "metabolic_age", None)
+        ),
+
+        "visceral_fat_rating": optional_int(
+            getattr(record, "body_vfr", None)
+        ),
+
+        "bmi": optional_float(
+            getattr(record, "bmi", None)
+        ),
+    }
+
+
 def upload_record_to_garmin(record, garmin):
-    """Upload one Wyze Scale record to Garmin Connect."""
+    """
+    Upload one Wyze record to Garmin.
+
+    Partial body composition:
+        Missing values are sent as None.
+
+    Weight-only:
+        Uses Garmin's weigh-in API rather than forcing a
+        body-composition FIT record.
+    """
     try:
-        measurement_time = record_datetime(record)
-        timestamp = measurement_time.isoformat()
+        data = normalize_scale_record(record)
 
-        # Wyze reports weight in pounds. Garmin's body composition FIT expects kg.
-        weight_kg = float(record.weight) * 0.45359237
-
-        active_met = None
-        if record.bmr is not None:
-            active_met = int(float(record.bmr) * 1.25)
-
-        print(
-            f"Uploading body composition to Garmin: "
-            f"{measurement_time.strftime('%Y-%m-%d %H:%M:%S %Z')} - "
-            f"{float(record.weight):.1f} lb / {weight_kg:.2f} kg"
+        measurement_utc = datetime.fromtimestamp(
+            data["measure_ts"] / 1000,
+            tz=timezone.utc,
         )
 
-        garmin.add_body_composition(
-            timestamp=timestamp,
-            weight=weight_kg,
-            percent_fat=(
-                float(record.body_fat)
-                if record.body_fat is not None
-                else None
-            ),
-            percent_hydration=(
-                float(record.body_water)
-                if record.body_water is not None
-                else None
-            ),
-            bone_mass=(
-                float(record.bone_mineral)
-                if record.bone_mineral is not None
-                else None
-            ),
-            muscle_mass=(
-                float(record.muscle)
-                if record.muscle is not None
-                else None
-            ),
-            basal_met=(
-                float(record.bmr)
-                if record.bmr is not None
-                else None
-            ),
-            active_met=active_met,
-            physique_rating=float(record.body_type or 5),
-            metabolic_age=(
-                float(record.metabolic_age)
-                if record.metabolic_age is not None
-                else None
-            ),
-            visceral_fat_rating=(
-                float(record.body_vfr)
-                if record.body_vfr is not None
-                else None
-            ),
-            bmi=(
-                float(record.bmi)
-                if record.bmi is not None
-                else None
-            ),
+        measurement_local = measurement_utc.astimezone()
+
+        composition_fields = (
+            "percent_fat",
+            "percent_hydration",
+            "bone_mass",
+            "muscle_mass",
+            "basal_met",
+            "physique_rating",
+            "metabolic_age",
+            "visceral_fat_rating",
+            "bmi",
         )
 
-        print("Garmin body composition upload successful.")
+        has_body_composition = any(
+            data[field] is not None
+            for field in composition_fields
+        )
+
+        if has_body_composition:
+            missing_fields = [
+                field
+                for field in composition_fields
+                if data[field] is None
+            ]
+
+            print(
+                "Uploading body composition to Garmin: "
+                f"{measurement_local.strftime('%Y-%m-%d %H:%M:%S %Z')} - "
+                f"{data['weight_lb']:.1f} lb / "
+                f"{data['weight_kg']:.2f} kg"
+            )
+
+            if missing_fields:
+                print(
+                    "Wyze did not provide: "
+                    + ", ".join(missing_fields)
+                    + ". Uploading the available values."
+                )
+
+            garmin.add_body_composition(
+                timestamp=measurement_local.isoformat(),
+                weight=data["weight_kg"],
+
+                percent_fat=data["percent_fat"],
+                percent_hydration=data["percent_hydration"],
+
+                bone_mass=data["bone_mass"],
+                muscle_mass=data["muscle_mass"],
+
+                basal_met=data["basal_met"],
+                active_met=data["active_met"],
+
+                physique_rating=data["physique_rating"],
+                metabolic_age=data["metabolic_age"],
+
+                visceral_fat_rating=data[
+                    "visceral_fat_rating"
+                ],
+
+                bmi=data["bmi"],
+            )
+
+            print(
+                "Garmin body composition upload successful."
+            )
+
+        else:
+            print(
+                "Wyze measurement contains weight only. "
+                "Uploading as a Garmin weigh-in: "
+                f"{measurement_local.strftime('%Y-%m-%d %H:%M:%S %Z')} - "
+                f"{data['weight_lb']:.1f} lb / "
+                f"{data['weight_kg']:.2f} kg"
+            )
+
+            garmin.add_weigh_in_with_timestamps(
+                weight=data["weight_kg"],
+                unitKey="kg",
+
+                dateTimestamp=measurement_local.strftime(
+                    "%Y-%m-%dT%H:%M:%S"
+                ),
+
+                gmtTimestamp=measurement_utc.strftime(
+                    "%Y-%m-%dT%H:%M:%S"
+                ),
+            )
+
+            print(
+                "Garmin weight-only upload successful."
+            )
+
         return True
 
     except GarminConnectTooManyRequestsError:
@@ -746,224 +887,335 @@ def upload_record_to_garmin(record, garmin):
         raise
 
     except GarminConnectAuthenticationError as exc:
-        print(f"Garmin authentication failed during upload: {exc}")
+        print(
+            f"Garmin authentication failed during upload: {exc}"
+        )
 
     except GarminConnectConnectionError as exc:
-        print(f"Garmin upload failed: {exc}")
+        print(
+            f"Garmin upload failed: {exc}"
+        )
+
+    except ValueError as exc:
+        print(
+            f"Invalid Wyze measurement: {exc}"
+        )
 
     except Exception as exc:
-        print(f"Unexpected Garmin upload error: {exc}")
+        print(
+            f"Unexpected Garmin upload error: {exc}"
+        )
 
     return False
-
-
-def upload_to_garmin(scale):
-    """Upload the latest record from a Wyze Scale object."""
-    if not scale.latest_records:
-        print("No Wyze scale records available to upload.")
-        return False
-
-    garmin = login_to_garmin()
-
-    if garmin is None:
-        return False
-
-    try:
-        return upload_record_to_garmin(scale.latest_records[0], garmin)
-
-    except GarminConnectTooManyRequestsError as exc:
-        print(f"Garmin rate limit reached during upload: {exc}")
-        return False
-
-
-# -----------------------------------------------------------------------------
-# Existing FIT/checksum handling for normal latest-reading mode
-# -----------------------------------------------------------------------------
-
-def generate_fit_file(scale):
-    fit = FitEncoder_Weight()
-    timestamp = math.trunc(scale.latest_records[0].measure_ts / 1000)
-    weight_in_kg = scale.latest_records[0].weight * 0.45359237
-
-    # Keep the existing FIT payload unchanged so existing cksum.txt files remain
-    # compatible and upgrading does not force an unnecessary duplicate upload.
-    data_keys = {
-        "percent_fat": scale.latest_records[0].body_fat,
-        "percent_hydration": scale.latest_records[0].body_water,
-        "visceral_fat_mass": scale.latest_records[0].body_fat,
-        "bone_mass": scale.latest_records[0].bone_mineral,
-        "muscle_mass": scale.latest_records[0].muscle,
-        "basal_met": scale.latest_records[0].bmr,
-        "physique_rating": scale.latest_records[0].body_type or 5,
-        "active_met": scale.latest_records[0].bmr,
-        "metabolic_age": scale.latest_records[0].metabolic_age,
-        "visceral_fat_rating": scale.latest_records[0].body_vfr,
-        "bmi": scale.latest_records[0].bmi,
-    }
-
-    data = {}
-    for key, value in data_keys.items():
-        data[key] = float(value) if value is not None else None
-
-    if data.get("basal_met") is None:
-        data["active_met"] = None
-    else:
-        data["active_met"] = int(float(scale.latest_records[0].bmr) * 1.25)
-
-    fit.write_file_info(time_created=timestamp)
-    fit.write_file_creator()
-    fit.write_device_info(timestamp=timestamp)
-    fit.write_weight_scale(
-        timestamp=timestamp,
-        weight=weight_in_kg,
-        percent_fat=data.get("percent_fat"),
-        percent_hydration=data.get("percent_hydration"),
-        visceral_fat_mass=data.get("visceral_fat_mass"),
-        bone_mass=data.get("bone_mass"),
-        muscle_mass=data.get("muscle_mass"),
-        basal_met=data.get("basal_met"),
-        physique_rating=data.get("physique_rating"),
-        active_met=data.get("active_met"),
-        metabolic_age=data.get("metabolic_age"),
-        visceral_fat_rating=data.get("visceral_fat_rating"),
-        bmi=data.get("bmi"),
-    )
-    fit.finish()
-
-    with open(FIT_FILE_PATH, "wb") as fitfile:
-        fitfile.write(fit.getvalue())
-
-
-def fit_checksum():
-    with open(FIT_FILE_PATH, "rb") as fitfile:
-        return hashlib.md5(fitfile.read()).hexdigest()
-
-
-def save_checksum(checksum):
-    with open(CHECKSUM_FILE_PATH, "w") as checksum_file:
-        checksum_file.write(checksum)
 
 
 # -----------------------------------------------------------------------------
 # Historical / time-window synchronization
 # -----------------------------------------------------------------------------
 
-def collect_timewindow_records(client, scale_devices, start_date, end_date):
+def collect_timewindow_records(
+    client,
+    scale_devices,
+    start_date,
+    end_date,
+):
     """
-    Retrieve Wyze scale records for the requested window.
+    Retrieve every Wyze scale record in the requested window.
 
-    The current Wyze SDK sends start_time=0 internally, so this function always
-    applies its own local timestamp filter before returning records.
+    Wyze's current SDK passes end_time to the API but hard-codes
+    start_time=0. The API may also return only a limited number
+    of records.
+
+    Walk backwards through history by progressively reducing
+    end_time.
     """
     records_by_id = {}
     queried_models = set()
 
-    for device in scale_devices:
-        product = getattr(device, "product", None)
-        device_model = getattr(product, "model", None)
-        model_key = device_model or "__default__"
+    # Safety guard against unexpected API behavior.
+    max_pages = 10000
 
-        # Scale history is user-oriented. Avoid querying the same model multiple
-        # times when more than one scale device of that model is present.
+    for device in scale_devices:
+        product = getattr(
+            device,
+            "product",
+            None,
+        )
+
+        device_model = getattr(
+            product,
+            "model",
+            None,
+        )
+
+        model_key = (
+            device_model
+            or "__default__"
+        )
+
+        # Scale history is user-oriented. Avoid asking for
+        # the same model twice.
         if model_key in queried_models:
             continue
+
         queried_models.add(model_key)
 
-        try:
-            print(
-                "Requesting Wyze historical records"
-                + (f" for model {device_model}" if device_model else "")
-                + "..."
+        print(
+            "Requesting Wyze historical records"
+            + (
+                f" for model {device_model}"
+                if device_model
+                else ""
             )
+            + "..."
+        )
 
-            if device_model:
-                records = client.scales.get_records(
-                    device_model=device_model,
-                    start_time=start_date,
-                    end_time=end_date,
-                )
-            else:
-                records = client.scales.get_records(
-                    start_time=start_date,
-                    end_time=end_date,
-                )
+        page = 0
+        query_end = end_date
+        previous_oldest_ms = None
 
-        except Exception as exc:
-            print(
-                "Unable to retrieve historical records"
-                + (f" for model {device_model}" if device_model else "")
-                + f": {exc}"
-            )
-            continue
+        while (
+            query_end >= start_date
+            and page < max_pages
+        ):
+            page += 1
 
-        for record in records:
             try:
-                measurement_time = record_datetime(record)
-            except Exception as exc:
-                print(f"Skipping record with invalid timestamp: {exc}")
-                continue
+                kwargs = {
+                    "start_time": start_date,
+                    "end_time": query_end,
+                }
 
-            # Explicit filtering is intentional because the Wyze SDK currently
-            # ignores start_time in its lower-level scale-service request.
-            if start_date <= measurement_time <= end_date:
-                records_by_id[record_identity(record)] = record
+                if device_model:
+                    kwargs["device_model"] = device_model
+
+                page_records = list(
+                    client.scales.get_records(
+                        **kwargs
+                    )
+                    or []
+                )
+
+            except Exception as exc:
+                print(
+                    f"Unable to retrieve Wyze history page {page}"
+                    + (
+                        f" for model {device_model}"
+                        if device_model
+                        else ""
+                    )
+                    + f": {exc}"
+                )
+
+                break
+
+            if not page_records:
+                print(
+                    f"History page {page}: "
+                    "Wyze returned 0 records. "
+                    "No older measurements are available."
+                )
+
+                break
+
+            valid_page_records = []
+
+            for record in page_records:
+                try:
+                    measurement_time = record_datetime(
+                        record
+                    )
+
+                except Exception as exc:
+                    print(
+                        "Skipping record with invalid timestamp: "
+                        f"{exc}"
+                    )
+                    continue
+
+                valid_page_records.append(
+                    (
+                        record,
+                        measurement_time,
+                    )
+                )
+
+                # Enforce the requested time window locally.
+                if (
+                    start_date
+                    <= measurement_time
+                    <= end_date
+                ):
+                    records_by_id[
+                        record_identity(record)
+                    ] = record
+
+            if not valid_page_records:
+                print(
+                    f"History page {page}: "
+                    "no records had usable timestamps. "
+                    "Stopping history scan."
+                )
+
+                break
+
+            oldest_record, oldest_time = min(
+                valid_page_records,
+                key=lambda item: float(
+                    item[0].measure_ts
+                ),
+            )
+
+            newest_record, newest_time = max(
+                valid_page_records,
+                key=lambda item: float(
+                    item[0].measure_ts
+                ),
+            )
+
+            oldest_ms = int(
+                float(
+                    oldest_record.measure_ts
+                )
+            )
+
+            print(
+                f"History page {page}: "
+                f"Wyze returned {len(page_records)} record(s), "
+                f"{oldest_time.strftime('%Y-%m-%d %H:%M:%S')} "
+                "through "
+                f"{newest_time.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+
+            if oldest_time <= start_date:
+                break
+
+            # Protect against a server that ignores the
+            # progressively earlier end_time.
+            if (
+                previous_oldest_ms is not None
+                and oldest_ms >= previous_oldest_ms
+            ):
+                print(
+                    "WARNING: Wyze did not return an older "
+                    "measurement after moving end_time backwards. "
+                    "Stopping to avoid an infinite loop."
+                )
+
+                break
+
+            previous_oldest_ms = oldest_ms
+
+            query_end = (
+                oldest_time
+                - timedelta(milliseconds=1)
+            )
 
     return sorted(
         records_by_id.values(),
-        key=lambda record: float(record.measure_ts),
+        key=lambda record: float(
+            record.measure_ts
+        ),
     )
 
 
-def update_latest_checksum_if_uploaded(client, scale_devices, uploaded_ids):
+def update_latest_checksum_if_uploaded(
+    client,
+    scale_devices,
+    uploaded_ids,
+):
     """
-    If a historical backfill included the current latest reading, update the
-    normal-mode checksum so the next cron execution does not upload it again.
+    If a backfill included the current latest reading,
+    save its record checksum so the next scheduled run
+    does not upload it again.
     """
     for device in scale_devices:
         try:
-            scale = client.scales.info(device_mac=device.mac)
+            scale = client.scales.info(
+                device_mac=device.mac
+            )
+
         except Exception as exc:
-            print(f"Unable to refresh latest scale record for checksum: {exc}")
+            print(
+                "Unable to refresh latest scale record "
+                f"for checksum: {exc}"
+            )
             continue
 
-        if not scale or not scale.latest_records:
+        if (
+            not scale
+            or not scale.latest_records
+        ):
             continue
 
         latest = scale.latest_records[0]
 
-        if record_identity(latest) not in uploaded_ids:
+        if (
+            record_identity(latest)
+            not in uploaded_ids
+        ):
             continue
 
         try:
-            generate_fit_file(scale)
-            checksum = fit_checksum()
-            save_checksum(checksum)
-            print(
-                "Updated cksum.txt because the time-window upload included "
-                "the latest Wyze measurement."
+            save_checksum(
+                measurement_checksum(
+                    latest
+                )
             )
+
+            print(
+                "Updated cksum.txt because the time-window "
+                "upload included the latest Wyze measurement."
+            )
+
             return
+
         except Exception as exc:
-            print(f"Unable to update latest-reading checksum: {exc}")
+            print(
+                "Unable to update latest-reading checksum: "
+                f"{exc}"
+            )
+
             return
 
 
-def sync_timewindow(client, scale_devices, start_date, end_date):
-    """Upload every Wyze Scale reading in an inclusive time window to Garmin."""
+def sync_timewindow(
+    client,
+    scale_devices,
+    start_date,
+    end_date,
+):
+    """
+    Upload every Wyze Scale reading in an inclusive
+    time window to Garmin.
+    """
     print()
     print("=" * 72)
-    print("Wyze -> Garmin historical synchronization")
+    print(
+        "Wyze -> Garmin historical synchronization"
+    )
     print("=" * 72)
-    print(f"Start: {start_date.isoformat()}")
-    print(f"End:   {end_date.isoformat()}")
+
+    print(
+        f"Start: {start_date.isoformat()}"
+    )
+
+    print(
+        f"End:   {end_date.isoformat()}"
+    )
+
     print()
 
     if start_date > end_date:
-        print("ERROR: Start date must be before end date.")
+        print(
+            "ERROR: Start date must be before end date."
+        )
         return False
 
     if not scale_devices:
-        print("No Wyze Scale devices found.")
+        print(
+            "No Wyze Scale devices found."
+        )
         return False
 
     records = collect_timewindow_records(
@@ -973,23 +1225,32 @@ def sync_timewindow(client, scale_devices, start_date, end_date):
         end_date,
     )
 
-    print(f"Found {len(records)} measurement(s) in the requested time window.")
+    print(
+        f"Found {len(records)} measurement(s) "
+        "in the requested time window."
+    )
 
     if not records:
         return True
 
     print()
+
     print(
-        "WARNING: time-window mode uploads every Wyze reading in the requested "
-        "window. It does not check Garmin for existing historical duplicates."
+        "WARNING: time-window mode uploads every Wyze "
+        "reading in the requested window. "
+        "It does not check Garmin for existing "
+        "historical duplicates."
     )
+
     print()
 
     # Authenticate once for the entire batch.
     garmin = login_to_garmin()
 
     if garmin is None:
-        print("Unable to authenticate with Garmin.")
+        print(
+            "Unable to authenticate with Garmin."
+        )
         return False
 
     uploaded = 0
@@ -998,36 +1259,88 @@ def sync_timewindow(client, scale_devices, start_date, end_date):
     uploaded_ids = set()
     rate_limited = False
 
-    for index, record in enumerate(records, start=1):
+    for index, record in enumerate(
+        records,
+        start=1,
+    ):
         attempted += 1
-        measurement_time = record_datetime(record)
-
-        print(
-            f"[{index}/{len(records)}] "
-            f"{measurement_time.strftime('%Y-%m-%d %H:%M:%S %Z')} - "
-            f"{float(record.weight):.1f} lb"
-        )
 
         try:
-            success = upload_record_to_garmin(record, garmin)
+            measurement_time = record_datetime(
+                record
+            )
+
+            weight = optional_float(
+                getattr(
+                    record,
+                    "weight",
+                    None,
+                )
+            )
+
+            weight_text = (
+                "unknown weight"
+                if weight is None
+                else f"{weight:.1f} lb"
+            )
+
+            print(
+                f"[{index}/{len(records)}] "
+                f"{measurement_time.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+                f"- {weight_text}"
+            )
+
+            success = upload_record_to_garmin(
+                record,
+                garmin,
+            )
 
         except GarminConnectTooManyRequestsError as exc:
-            print(f"Garmin rate limit reached during historical upload: {exc}")
-            print("Stopping the batch to avoid further requests.")
+            print(
+                "Garmin rate limit reached during "
+                f"historical upload: {exc}"
+            )
+
+            print(
+                "Stopping the batch to avoid further requests."
+            )
+
             failed += 1
             rate_limited = True
             break
 
+        except Exception as exc:
+            print(
+                "Unexpected error processing "
+                f"historical record: {exc}"
+            )
+
+            success = False
+
         if success:
             uploaded += 1
-            uploaded_ids.add(record_identity(record))
+
+            uploaded_ids.add(
+                record_identity(
+                    record
+                )
+            )
+
         else:
             failed += 1
 
-        if index < len(records) and BACKFILL_DELAY_SECONDS > 0:
-            time_module.sleep(BACKFILL_DELAY_SECONDS)
+        if (
+            index < len(records)
+            and BACKFILL_DELAY_SECONDS > 0
+        ):
+            time_module.sleep(
+                BACKFILL_DELAY_SECONDS
+            )
 
-    not_attempted = len(records) - attempted
+    not_attempted = (
+        len(records)
+        - attempted
+    )
 
     if uploaded_ids:
         update_latest_checksum_if_uploaded(
@@ -1038,12 +1351,29 @@ def sync_timewindow(client, scale_devices, start_date, end_date):
 
     print()
     print("=" * 72)
-    print("Historical synchronization complete")
+
+    print(
+        "Historical synchronization complete"
+    )
+
     print("=" * 72)
-    print(f"Measurements found:     {len(records)}")
-    print(f"Successfully uploaded:  {uploaded}")
-    print(f"Failed:                 {failed}")
-    print(f"Not attempted:          {not_attempted}")
+
+    print(
+        f"Measurements found:     {len(records)}"
+    )
+
+    print(
+        f"Successfully uploaded:  {uploaded}"
+    )
+
+    print(
+        f"Failed:                 {failed}"
+    )
+
+    print(
+        f"Not attempted:          {not_attempted}"
+    )
+
     print("=" * 72)
 
     if rate_limited:
@@ -1056,8 +1386,12 @@ def sync_timewindow(client, scale_devices, start_date, end_date):
 # Normal latest-reading synchronization
 # -----------------------------------------------------------------------------
 
-def sync_latest(client, devices):
+def sync_latest(
+    client,
+    devices,
+):
     scale_found = False
+    garmin = None
 
     for device in devices:
         if device.type != "WyzeScale":
@@ -1066,51 +1400,104 @@ def sync_latest(client, devices):
         scale_found = True
 
         try:
-            scale = client.scales.info(device_mac=device.mac)
+            scale = client.scales.info(
+                device_mac=device.mac
+            )
+
         except Exception as exc:
-            print(f"Unable to retrieve scale {device.mac}: {exc}")
+            print(
+                f"Unable to retrieve scale {device.mac}: {exc}"
+            )
             continue
 
-        if not scale or not scale.latest_records:
-            print(f"Scale {device.mac} has no measurements available.")
+        if (
+            not scale
+            or not scale.latest_records
+        ):
+            print(
+                f"Scale {device.mac} has no measurements available."
+            )
             continue
 
-        print(f"Scale found with MAC {device.mac}. Latest record is:")
-        print(scale.latest_records)
-        print(f"Body Type: {scale.latest_records[0].body_type or 5}")
+        record = scale.latest_records[0]
 
-        print("Generating fit data...")
-        generate_fit_file(scale)
-        print("Fit data generated...")
+        print(
+            f"Scale found with MAC {device.mac}. "
+            "Latest record is:"
+        )
 
-        checksum = fit_checksum()
+        print(
+            scale.latest_records
+        )
 
-        checksum_exists = os.path.exists(CHECKSUM_FILE_PATH)
+        current_checksum = measurement_checksum(
+            record
+        )
 
-        if checksum_exists:
-            with open(CHECKSUM_FILE_PATH, "r") as checksum_file:
-                stored_checksum = checksum_file.read().strip()
+        previous_checksum = load_previous_checksum()
 
-            if checksum == stored_checksum:
-                print("No new measurement")
+        if previous_checksum == current_checksum:
+            print(
+                "No new measurement"
+            )
+            continue
+
+        if previous_checksum:
+            print(
+                "New measurement detected. "
+                "Uploading to Garmin..."
+            )
+
+        else:
+            print(
+                "No checksum detected. "
+                "Uploading measurement and creating checksum..."
+            )
+
+        if garmin is None:
+            garmin = login_to_garmin()
+
+            if garmin is None:
+                print(
+                    "Unable to authenticate with Garmin."
+                )
                 continue
 
-            print("New measurement detected. Uploading to Garmin...")
+        try:
+            success = upload_record_to_garmin(
+                record,
+                garmin,
+            )
+
+        except GarminConnectTooManyRequestsError as exc:
+            print(
+                "Garmin rate limit reached during upload: "
+                f"{exc}"
+            )
+            return
+
+        if success:
+            # Only advance the checksum after Garmin
+            # accepted the measurement.
+            save_checksum(
+                current_checksum
+            )
+
+            print(
+                "Measurement synchronized successfully."
+            )
 
         else:
-            print("No checksum detected. Uploading measurement and creating checksum...")
-
-        if upload_to_garmin(scale):
-            print("Measurement uploaded successfully.")
-            save_checksum(checksum)
-
-            if not checksum_exists:
-                print("cksum.txt created.")
-        else:
-            print("Measurement upload failed.")
+            print(
+                "Measurement upload failed. "
+                "Checksum was not updated, so the next "
+                "scheduled run will retry it."
+            )
 
     if not scale_found:
-        print("No Wyze Scale device found on this account.")
+        print(
+            "No Wyze Scale device found on this account."
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -1124,22 +1511,44 @@ def main():
     client, tokens = login_to_wyze()
 
     if client is None:
-        print("Unable to establish Wyze session.")
+        print(
+            "Unable to establish Wyze session."
+        )
         return 1
 
-    devices = get_wyze_devices(client, tokens)
+    client, tokens, devices = get_wyze_devices(
+        client,
+        tokens,
+    )
 
-    if devices is None:
+    if (
+        client is None
+        or devices is None
+    ):
         return 1
 
-    scale_devices = [device for device in devices if device.type == "WyzeScale"]
+    scale_devices = [
+        device
+        for device in devices
+        if device.type == "WyzeScale"
+    ]
 
     if args.timewindow:
         try:
-            start_date = parse_date_value(args.timewindow[0], is_end=False)
-            end_date = parse_date_value(args.timewindow[1], is_end=True)
+            start_date = parse_date_value(
+                args.timewindow[0],
+                is_end=False,
+            )
+
+            end_date = parse_date_value(
+                args.timewindow[1],
+                is_end=True,
+            )
+
         except ValueError as exc:
-            print(f"ERROR: {exc}")
+            print(
+                f"ERROR: {exc}"
+            )
             return 2
 
         success = sync_timewindow(
@@ -1148,9 +1557,18 @@ def main():
             start_date,
             end_date,
         )
-        return 0 if success else 1
 
-    sync_latest(client, devices)
+        return (
+            0
+            if success
+            else 1
+        )
+
+    sync_latest(
+        client,
+        devices,
+    )
+
     return 0
 
 
